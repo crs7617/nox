@@ -6,7 +6,9 @@
   "scripts": {
     "test": "vitest run",
     "dev": "tsx src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "demo": "tsx src/demo-server.ts",
+    "demo-client": "tsx src/demo-client.ts"
   },
   "repository": {
     "type": "git",
