@@ -1,0 +1,44 @@
+
+# Dependencies
+node_modules/
+
+# Compiled output
+dist/
+build/
+coverage/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Local application data
+nox-audit.jsonl
+*.local.json
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# Test and tool caches
+.vitest/
+.eslintcache
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor settings
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Temporary files
+*.tmp
+*.bak
