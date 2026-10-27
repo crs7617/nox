@@ -20,6 +20,7 @@ pnpm-debug.log*
 
 # Local application data
 nox-audit.jsonl
+nox-policy.json
 *.local.json
 
 # TypeScript build cache

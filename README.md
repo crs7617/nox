@@ -1,108 +1,120 @@
 # Nox
 
-Nox is a minimal MCP stdio proxy. It discovers the upstream server's tools,
-exposes the same metadata downstream, and evaluates policy before forwarding
-each invocation.
+Nox is a prototype MCP stdio security proxy that discovers upstream tools and
+guards their execution with policy, human approval, privacy-conscious audit
+logging, and failure handling.
 
-## Dynamic tool discovery
+## How it works
 
-At startup Nox calls the upstream MCP server's `tools/list` operation. The
-validated tool names, descriptions, and input schemas are exposed unchanged
-through its downstream `tools/list` response. Every downstream `tools/call`
-is routed by the discovered tool name; no individual tool is hardcoded in the
-proxy. An empty, invalid, duplicate, or failed discovery response fails
-startup rather than exposing a misleading partial list.
+```mermaid
+flowchart LR
+    C[Downstream MCP client] <-->|stdio / MCP| N[Nox]
+    N -->|tools/list| U[Configured demo upstream]
+    N --> P[Policy]
+    P --> A[Human approval]
+    A --> L[JSONL audit]
+    N -->|approved call| U
+    U -->|result or failure| N
+```
 
-## Policy configuration
+At startup, Nox connects to the upstream demo MCP server and validates its
+complete tool list. It exposes the discovered names, descriptions, and input
+schemas downstream, then routes calls by tool name. Each call is checked by
+the allow/deny policy first; configured sensitive tools then require explicit
+terminal approval. Calls are audited without arguments or results. Upstream
+failures and local timeouts become safe MCP tool errors, and calls are not
+retried because they may have side effects.
 
-By default, Nox looks for an optional `nox-policy.json` in the current
-working directory. Set `NOX_POLICY_FILE` to use a different JSON file. An
-explicitly configured file must exist and be valid; startup fails closed if
-it cannot be read or parsed.
+Nox currently launches the fixed local demo server
+`npx tsx src/demo-server.ts`. It is not yet a general upstream command
+launcher, remote MCP gateway, authentication layer, or production service.
 
-The file contains only exact tool-name rules:
+## Features
+
+- Dynamic upstream MCP tool discovery and metadata exposure.
+- Exact-name allow/deny policy rules and `NOX_DENY_TOOLS` compatibility denies.
+- Fail-closed human approval for configured sensitive tools.
+- Serialized, privacy-conscious JSONL audit events.
+- Configurable upstream call timeout and safe failure responses.
+- MCP protocol messages on stdout; diagnostics on stderr.
+
+## Prerequisites and commands
+
+Requires Node.js 18 or newer and npm.
+
+```sh
+npm ci
+npm run build
+npm test
+npm run demo-client
+```
+
+`npm run demo-client` starts the demo client, which starts Nox; Nox starts the
+demo upstream server. The demo client prints the discovered tools and calls
+`greet`.
+
+## Configuration
+
+Nox optionally reads `nox-policy.json` from the working directory. Set
+`NOX_POLICY_FILE` to use another file. An explicitly selected file must exist
+and validate.
 
 ```json
 {
-  "allow": ["greet"],
+  "allow": ["greet", "farewell"],
   "deny": ["dangerous-tool"],
-  "approval": ["sensitive-tool"],
+  "approval": ["farewell"],
   "approvalTimeoutMs": 30000,
   "upstreamTimeoutMs": 30000
 }
 ```
 
-Rules are evaluated in this order:
+Rules use exact tool names. `NOX_DENY_TOOLS` is a comma-separated deny
+override. Denies are evaluated before the allow list; a non-empty `allow`
+list denies tools not listed. Policy denial always precedes approval and
+upstream execution.
 
-1. `NOX_DENY_TOOLS` is always a deny override.
-2. A matching policy-file `deny` rule denies the call.
-3. If `allow` is non-empty, tools not in `allow` are denied.
-4. Otherwise, the tool is allowed.
+Approval prompts are written to stderr and read from `/dev/tty` (or
+`CONIN$` on Windows), never from the MCP protocol stdin. `y` or `yes` is
+required; rejection, EOF, unavailable input, malformed input, and timeout all
+fail closed. Prompts are serialized. `NOX_APPROVAL_INPUT_FILE` exists only
+for non-interactive test harnesses.
 
-The same tool may not appear in both `allow` and `deny`; this is a
-configuration error. Unknown fields, non-string rule values, and malformed
-JSON are also configuration errors. The compatibility variable
-`NOX_DENY_TOOLS` is a comma-separated list, for example
-`NOX_DENY_TOOLS=greet,other-tool`.
+Audit events default to `nox-audit.jsonl`; set `NOX_AUDIT_FILE` to override the
+path. Events contain a UTC timestamp, sanitized tool name, policy decision,
+outcome, and safe reason or approval status. Arguments, results, secrets,
+environment values, and raw exceptions are not written. Audit write failures
+produce a stderr warning and may leave an event missing.
 
-Policy rules and `approval` entries apply to discovered tool names. Tools in
-`approval` must pass policy first and then require explicit human
-approval. Approval prompts are written only to stderr and read from the
-controlling terminal (`/dev/tty`, or `CONIN$` on Windows), never from the MCP
-protocol stdin. Enter `y` or `yes` to approve; any other response, EOF,
-unavailable terminal, or timeout rejects the call. Approval prompts are
-serialized, so concurrent calls cannot answer one another. The optional
-`NOX_APPROVAL_INPUT_FILE` is intended only for non-interactive test harnesses.
+`upstreamTimeoutMs` controls how long Nox waits for an upstream call. The
+installed MCP stdio transport does not guarantee cancellation when this local
+deadline wins, so upstream work may continue in the background. Nox does not
+retry timed-out or failed calls.
 
-`upstreamTimeoutMs` limits how long Nox waits for each upstream tool call.
-Timeouts return a valid MCP tool error, are audited as upstream timeouts, and
-do not automatically retry the call because tools may have side effects.
-The SDK transport does not guarantee cancellation when the local timeout wins;
-the upstream operation may continue in the background, so a timed-out call
-must not be retried automatically.
+## Development roadmap
 
-## Commands
+### Stage 1 — Security gateway core
 
-```sh
-npm run build
-npm test
-npm run demo-client
-NOX_DENY_TOOLS=greet npm run demo-client
-```
+- [x] MCP proxy and tool forwarding
+- [x] Configurable allow/deny policies
+- [x] Human approval gate for sensitive tools
+- [x] Privacy-conscious audit logging
+- [x] Dynamic upstream tool discovery
+- [x] Upstream timeout and failure handling
 
-All protocol messages use stdout. Nox diagnostics and upstream demo-handler
-diagnostics use stderr.
+### Stage 2 — Real MCP integrations
 
-## Audit logging
+- [ ] Configurable upstream server commands and arguments
+- [ ] Support for real local stdio MCP servers
+- [ ] End-to-end test with a real MCP server and compatible client
+- [ ] Document server configuration and operational limitations
 
-Nox appends one privacy-conscious JSONL event for every tool invocation to
-`nox-audit.jsonl` in the project working directory. Set `NOX_AUDIT_FILE` to
-override the path. Each event contains only:
+### Stage 3 — Remote support and hardening
 
-```json
-{
-  "timestamp": "2026-10-27T12:00:00.000Z",
-  "tool": "greet",
-  "decision": "allowed",
-  "outcome": "success"
-}
-```
+- [ ] Remote Streamable HTTP transport, including authentication where appropriate
+- [ ] Security tests for malformed input, secrets handling, and failure cases
+- [ ] Reproducible demo and security documentation
 
-Denied events have `"decision": "denied"` and `"outcome": "error"`, plus a
-safe policy reason when available. Tool names and reasons are bounded and
-sanitized. Arguments, results, secrets, environment-variable values, and raw
-error objects or messages are never written. Approval-gated events also
-contain `"approval": "approved"`, `"rejected"`, `"timed_out"`, or
-`"unavailable"`.
-
-Writes are append-only and serialized so concurrent events do not overlap.
-Audit writes are asynchronous, and a filesystem failure does not stop the
-gateway or turn into a false persistence claim; Nox emits a clear stderr
-warning and that event may be missing from the audit file.
-
-Run the build and all tests with:
-
-```sh
-npm run build
-npm test
-```
+The Stage 2 and Stage 3 items are intentionally incomplete; Nox is a
+prototype until real upstream configuration and an end-to-end external
+integration are implemented.
