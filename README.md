@@ -1,33 +1,16 @@
 # Nox
 
-Nox is a prototype MCP stdio security proxy that discovers upstream tools and
-guards their execution with policy, human approval, privacy-conscious audit
-logging, and failure handling.
+Nox is a security gateway for MCP tool calls. It sits between MCP clients and upstream servers to enforce tool policies, require human approval for sensitive operations, and record privacy-conscious audit logs.
 
 ## How it works
 
-```mermaid
-flowchart LR
-    C[Downstream MCP client] <-->|stdio / MCP| N[Nox]
-    N -->|tools/list| U[Configured demo upstream]
-    N --> P[Policy]
-    P --> A[Human approval]
-    A --> L[JSONL audit]
-    N -->|approved call| U
-    U -->|result or failure| N
-```
+Nox sits between an MCP client and an upstream MCP server, acting as a security checkpoint for tool calls.
 
-At startup, Nox connects to the upstream demo MCP server and validates its
-complete tool list. It exposes the discovered names, descriptions, and input
-schemas downstream, then routes calls by tool name. Each call is checked by
-the allow/deny policy first; configured sensitive tools then require explicit
-terminal approval. Calls are audited without arguments or results. Upstream
-failures and local timeouts become safe MCP tool errors, and calls are not
-retried because they may have side effects.
+At startup, Nox discovers the upstream server's tools and exposes their names, descriptions, and input schemas to the client. When a tool is called, Nox checks its policy first, requests human approval for configured sensitive tools, and forwards only permitted calls. Decisions and outcomes are recorded in privacy-conscious JSONL audit logs.
 
-Nox currently launches the fixed local demo server
-`npx tsx src/demo-server.ts`. It is not yet a general upstream command
-launcher, remote MCP gateway, authentication layer, or production service.
+Upstream failures and timeouts return safe MCP errors. Nox does not automatically retry calls, since tools may have side effects.
+
+**Current limitation:** Nox currently launches a fixed local demo server. Configurable upstream servers and remote MCP connections are planned.
 
 ## Features
 
