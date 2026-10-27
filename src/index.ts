@@ -14,6 +14,7 @@ import {
   parseEnvironmentDeniedTools,
 } from "./policy/index.js";
 import { AuditLogger } from "./audit/index.js";
+import { ApprovalManager, type ApprovalResult } from "./approval/index.js";
 
 const upstream = new Client({
   name: "nox-upstream-client",
@@ -32,9 +33,11 @@ const nox = new McpServer({
 
 async function main() {
   try {
-    const policy = createPolicyEngine(
-      loadPolicyConfiguration(),
-      parseEnvironmentDeniedTools(),
+    const policyConfig = loadPolicyConfiguration();
+    const policy = createPolicyEngine(policyConfig, parseEnvironmentDeniedTools());
+    const approval = new ApprovalManager(
+      new Set(policyConfig.approval),
+      policyConfig.approvalTimeoutMs,
     );
     const audit = new AuditLogger();
 
@@ -69,6 +72,32 @@ async function main() {
           };
         }
 
+        let approvalDecision: ApprovalResult | undefined;
+        if (approval.required("greet")) {
+          approvalDecision = await approval.request("greet");
+          if (approvalDecision !== "approved") {
+            const reason =
+              approvalDecision === "timed_out"
+                ? "Approval timed out"
+                : approvalDecision === "unavailable"
+                  ? "Approval unavailable"
+                  : "Approval rejected";
+            console.error(`[NOX] DENIED tool=greet reason=${reason}`);
+            await audit.write({
+              timestamp: new Date().toISOString(),
+              tool: "greet",
+              decision: "allowed",
+              approval: approvalDecision,
+              outcome: "error",
+              reason,
+            });
+            return {
+              content: [{ type: "text", text: `Blocked by Nox approval: ${reason}` }],
+              isError: true,
+            };
+          }
+        }
+
         console.error(`[NOX] ALLOWED tool=greet reason=${decision.reason}`);
 
         try {
@@ -88,6 +117,7 @@ async function main() {
             timestamp: new Date().toISOString(),
             tool: "greet",
             decision: "allowed",
+            ...(approvalDecision === undefined ? {} : { approval: approvalDecision }),
             outcome: result.isError ? "error" : "success",
           });
           return result as CallToolResult;
