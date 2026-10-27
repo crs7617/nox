@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run src",
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "demo": "tsx src/demo-server.ts",
