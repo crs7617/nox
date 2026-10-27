@@ -12,6 +12,7 @@ const transport = new StdioClientTransport({
   args: ["tsx", "src/index.ts"],
   env: {
     NOX_DENY_TOOLS: process.env.NOX_DENY_TOOLS ?? "",
+    NOX_AUDIT_FILE: process.env.NOX_AUDIT_FILE ?? "nox-audit.jsonl",
     ...(process.env.NOX_POLICY_FILE === undefined
       ? {}
       : { NOX_POLICY_FILE: process.env.NOX_POLICY_FILE }),
