@@ -17,6 +17,10 @@ describe("Nox integration", () => {
 
     try {
       await client.connect(transport);
+      const tools = await client.listTools();
+      expect(tools.tools.map((tool) => tool.name)).toEqual(["greet", "farewell"]);
+      expect(tools.tools[1]?.description).toBe("Say farewell to a person.");
+      expect(tools.tools[1]?.inputSchema).toMatchObject({ type: "object" });
       const result = await client.callTool({
         name: "greet",
         arguments: { name: "Test" },
@@ -247,6 +251,117 @@ describe("Nox integration", () => {
       await rm(auditFile, { force: true });
       await rm(policyFile, { force: true });
       await rm(approvalFile, { force: true });
+    }
+  }, 15000);
+
+  it("forwards a discovered tool by name", async () => {
+    const client = new Client({ name: "nox-integration-test", version: "1.0.0" });
+    const transport = new StdioClientTransport({
+      command: "npx",
+      args: ["tsx", "src/index.ts"],
+    });
+
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: "farewell",
+        arguments: { name: "Test" },
+      });
+      expect(result).toMatchObject({
+        content: [{ type: "text", text: "Goodbye, Test!" }],
+      });
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
+  it("returns an MCP error for an unknown tool", async () => {
+    const client = new Client({ name: "nox-integration-test", version: "1.0.0" });
+    const transport = new StdioClientTransport({
+      command: "npx",
+      args: ["tsx", "src/index.ts"],
+    });
+
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: "missing",
+        arguments: {},
+      });
+      expect(result).toMatchObject({
+        isError: true,
+        content: [{ type: "text", text: "Unknown tool" }],
+      });
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
+  it("denies a discovered tool before upstream execution", async () => {
+    const auditFile = join(tmpdir(), `nox-discovered-denied-${Date.now()}.jsonl`);
+    const policyFile = join(tmpdir(), `nox-discovered-policy-${Date.now()}.json`);
+    await writeFile(policyFile, JSON.stringify({ deny: ["farewell"] }));
+    const client = new Client({ name: "nox-integration-test", version: "1.0.0" });
+    const transport = new StdioClientTransport({
+      command: "npx",
+      args: ["tsx", "src/index.ts"],
+      env: { NOX_POLICY_FILE: policyFile, NOX_AUDIT_FILE: auditFile },
+      stderr: "pipe",
+    });
+    let stderr = "";
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: "farewell",
+        arguments: { name: "Test" },
+      });
+      expect(result.isError).toBe(true);
+      expect(stderr).not.toContain("[NOX-DEMO] farewell handler executed");
+    } finally {
+      await client.close();
+      await rm(auditFile, { force: true });
+      await rm(policyFile, { force: true });
+    }
+  }, 15000);
+
+  it("requires approval for a discovered sensitive tool", async () => {
+    const auditFile = join(tmpdir(), `nox-discovered-approval-${Date.now()}.jsonl`);
+    const policyFile = join(tmpdir(), `nox-discovered-approval-policy-${Date.now()}.json`);
+    await writeFile(
+      policyFile,
+      JSON.stringify({ approval: ["farewell"], approvalTimeoutMs: 20 }),
+    );
+    const client = new Client({ name: "nox-integration-test", version: "1.0.0" });
+    const transport = new StdioClientTransport({
+      command: "npx",
+      args: ["tsx", "src/index.ts"],
+      env: { NOX_POLICY_FILE: policyFile, NOX_AUDIT_FILE: auditFile },
+      stderr: "pipe",
+    });
+    let stderr = "";
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: "farewell",
+        arguments: { name: "Test" },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        { type: "text", text: "Blocked by Nox approval: Approval unavailable" },
+      ]);
+      expect(stderr).not.toContain("[NOX-DEMO] farewell handler executed");
+    } finally {
+      await client.close();
+      await rm(auditFile, { force: true });
+      await rm(policyFile, { force: true });
     }
   }, 15000);
 });

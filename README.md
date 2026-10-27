@@ -1,7 +1,17 @@
 # Nox
 
-Nox is a minimal MCP stdio proxy. It exposes the upstream demo server's
-`greet` tool and evaluates a local policy before forwarding each invocation.
+Nox is a minimal MCP stdio proxy. It discovers the upstream server's tools,
+exposes the same metadata downstream, and evaluates policy before forwarding
+each invocation.
+
+## Dynamic tool discovery
+
+At startup Nox calls the upstream MCP server's `tools/list` operation. The
+validated tool names, descriptions, and input schemas are exposed unchanged
+through its downstream `tools/list` response. Every downstream `tools/call`
+is routed by the discovered tool name; no individual tool is hardcoded in the
+proxy. An empty, invalid, duplicate, or failed discovery response fails
+startup rather than exposing a misleading partial list.
 
 ## Policy configuration
 
@@ -34,7 +44,8 @@ JSON are also configuration errors. The compatibility variable
 `NOX_DENY_TOOLS` is a comma-separated list, for example
 `NOX_DENY_TOOLS=greet,other-tool`.
 
-Tools in `approval` must pass policy first and then require explicit human
+Policy rules and `approval` entries apply to discovered tool names. Tools in
+`approval` must pass policy first and then require explicit human
 approval. Approval prompts are written only to stderr and read from the
 controlling terminal (`/dev/tty`, or `CONIN$` on Windows), never from the MCP
 protocol stdin. Enter `y` or `yes` to approve; any other response, EOF,
