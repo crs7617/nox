@@ -1,13 +1,14 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
+  CallToolRequestSchema,
   CallToolResultSchema,
+  ListToolsRequestSchema,
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
 import {
   createPolicyEngine,
   loadPolicyConfiguration,
@@ -15,6 +16,7 @@ import {
 } from "./policy/index.js";
 import { AuditLogger } from "./audit/index.js";
 import { ApprovalManager, type ApprovalResult } from "./approval/index.js";
+import { discoverTools } from "./discovery/index.js";
 
 const upstream = new Client({
   name: "nox-upstream-client",
@@ -26,9 +28,11 @@ const upstreamTransport = new StdioClientTransport({
   args: ["tsx", "src/demo-server.ts"],
 });
 
-const nox = new McpServer({
+const nox = new Server({
   name: "nox",
   version: "0.1.0",
+}, {
+  capabilities: { tools: {} },
 });
 
 async function main() {
@@ -44,22 +48,36 @@ async function main() {
     // Nox acts as an MCP client to the upstream server.
     await upstream.connect(upstreamTransport);
 
-    // Nox also acts as an MCP server to its own downstream client.
-    nox.registerTool(
-      "greet",
-      {
-        description: "Greet a person through the Nox security gateway.",
-        inputSchema: {
-          name: z.string().min(1).describe("The person's name"),
-        },
-      },
-      async ({ name }: { name: string }) => {
-        const decision = policy.evaluate("greet");
-        if (!decision.allowed) {
-          console.error(`[NOX] DENIED tool=greet reason=${decision.reason}`);
+    const discoveredTools = await discoverTools(upstream);
+    const tools = new Map(discoveredTools.map((tool) => [tool.name, tool]));
+
+    nox.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: discoveredTools,
+    }));
+
+    nox.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const toolName = request.params.name;
+      const tool = tools.get(toolName);
+      if (tool === undefined) {
+        await audit.write({
+          timestamp: new Date().toISOString(),
+          tool: toolName,
+          decision: "denied",
+          outcome: "error",
+          reason: "Unknown upstream tool",
+        });
+        return {
+          content: [{ type: "text", text: "Unknown tool" }],
+          isError: true,
+        };
+      }
+
+      const decision = policy.evaluate(toolName);
+      if (!decision.allowed) {
+          console.error(`[NOX] DENIED tool=${toolName} reason=${decision.reason}`);
           await audit.write({
             timestamp: new Date().toISOString(),
-            tool: "greet",
+            tool: toolName,
             decision: "denied",
             outcome: "error",
             reason: decision.reason,
@@ -70,22 +88,22 @@ async function main() {
             ],
             isError: true,
           };
-        }
+      }
 
-        let approvalDecision: ApprovalResult | undefined;
-        if (approval.required("greet")) {
-          approvalDecision = await approval.request("greet");
-          if (approvalDecision !== "approved") {
+      let approvalDecision: ApprovalResult | undefined;
+      if (approval.required(toolName)) {
+        approvalDecision = await approval.request(toolName);
+        if (approvalDecision !== "approved") {
             const reason =
               approvalDecision === "timed_out"
                 ? "Approval timed out"
                 : approvalDecision === "unavailable"
                   ? "Approval unavailable"
                   : "Approval rejected";
-            console.error(`[NOX] DENIED tool=greet reason=${reason}`);
+            console.error(`[NOX] DENIED tool=${toolName} reason=${reason}`);
             await audit.write({
               timestamp: new Date().toISOString(),
-              tool: "greet",
+              tool: toolName,
               decision: "allowed",
               approval: approvalDecision,
               outcome: "error",
@@ -95,16 +113,16 @@ async function main() {
               content: [{ type: "text", text: `Blocked by Nox approval: ${reason}` }],
               isError: true,
             };
-          }
         }
+      }
 
-        console.error(`[NOX] ALLOWED tool=greet reason=${decision.reason}`);
+      console.error(`[NOX] ALLOWED tool=${toolName} reason=${decision.reason}`);
 
-        try {
+      try {
           const result = await upstream.callTool(
             {
-              name: "greet",
-              arguments: { name },
+              name: toolName,
+              arguments: request.params.arguments,
             },
             CallToolResultSchema,
           );
@@ -115,24 +133,27 @@ async function main() {
 
           await audit.write({
             timestamp: new Date().toISOString(),
-            tool: "greet",
+            tool: toolName,
             decision: "allowed",
             ...(approvalDecision === undefined ? {} : { approval: approvalDecision }),
             outcome: result.isError ? "error" : "success",
           });
           return result as CallToolResult;
-        } catch {
+      } catch {
           await audit.write({
             timestamp: new Date().toISOString(),
-            tool: "greet",
+            tool: toolName,
             decision: "allowed",
+            ...(approvalDecision === undefined ? {} : { approval: approvalDecision }),
             outcome: "error",
             reason: "Upstream call failed",
           });
-          throw new Error("Upstream tool call failed");
+          return {
+            content: [{ type: "text", text: "Upstream tool call failed" }],
+            isError: true,
+          };
         }
-      },
-    );
+    });
 
     const downstreamTransport = new StdioServerTransport();
     await nox.connect(downstreamTransport);

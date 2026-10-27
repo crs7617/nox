@@ -29,6 +29,27 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  "farewell",
+  {
+    description: "Say farewell to a person.",
+    inputSchema: {
+      name: z.string().min(1).describe("The person's name"),
+    },
+  },
+  async ({ name }) => {
+    console.error("[NOX-DEMO] farewell handler executed");
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Goodbye, ${name}!`,
+        },
+      ],
+    };
+  },
+);
+
 const transport = new StdioServerTransport();
 
 await server.connect(transport);
