@@ -9,7 +9,10 @@ const client = new Client({
 
 const transport = new StdioClientTransport({
   command: "npx",
-  args: ["tsx", "src/demo-server.ts"],
+  args: ["tsx", "src/index.ts"],
+  env: {
+    NOX_DENY_TOOLS: process.env.NOX_DENY_TOOLS ?? "",
+  },
 });
 
 async function main() {
