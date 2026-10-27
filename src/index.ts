@@ -8,6 +8,11 @@ import {
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import {
+  createPolicyEngine,
+  loadPolicyConfiguration,
+  parseEnvironmentDeniedTools,
+} from "./policy/index.js";
 
 const upstream = new Client({
   name: "nox-upstream-client",
@@ -24,16 +29,13 @@ const nox = new McpServer({
   version: "0.1.0",
 });
 
-// Comma-separated tool names to deny, e.g. NOX_DENY_TOOLS=greet
-const deniedTools = new Set(
-  (process.env.NOX_DENY_TOOLS ?? "")
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean),
-);
-
 async function main() {
   try {
+    const policy = createPolicyEngine(
+      loadPolicyConfiguration(),
+      parseEnvironmentDeniedTools(),
+    );
+
     // Nox acts as an MCP client to the upstream server.
     await upstream.connect(upstreamTransport);
 
@@ -47,18 +49,18 @@ async function main() {
         },
       },
       async ({ name }: { name: string }) => {
-        // Enforce policy BEFORE forwarding the tool call.
-        if (deniedTools.has("greet")) {
-          console.error("[NOX] DENIED tool=greet");
+        const decision = policy.evaluate("greet");
+        if (!decision.allowed) {
+          console.error(`[NOX] DENIED tool=greet reason=${decision.reason}`);
           return {
             content: [
-              { type: "text", text: "Blocked by Nox policy: greet" },
+              { type: "text", text: `Blocked by Nox policy: ${decision.reason}` },
             ],
             isError: true,
           };
         }
 
-        console.error("[NOX] ALLOWED tool=greet");
+        console.error(`[NOX] ALLOWED tool=greet reason=${decision.reason}`);
 
         const result = await upstream.callTool(
           {

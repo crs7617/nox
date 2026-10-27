@@ -16,14 +16,17 @@ server.registerTool(
       name: z.string().min(1).describe("The person's name"),
     },
   },
-  async ({ name }) => ({
-    content: [
-      {
-        type: "text",
-        text: `Hello, ${name}! Greetings from Nox.`,
-      },
-    ],
-  }),
+  async ({ name }) => {
+    console.error("[NOX-DEMO] greet handler executed");
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Hello, ${name}! Greetings from Nox.`,
+        },
+      ],
+    };
+  },
 );
 
 const transport = new StdioServerTransport();
