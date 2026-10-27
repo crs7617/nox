@@ -18,7 +18,12 @@ describe("Nox integration", () => {
     try {
       await client.connect(transport);
       const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toEqual(["greet", "farewell"]);
+      expect(tools.tools.map((tool) => tool.name)).toEqual([
+        "greet",
+        "farewell",
+        "fail",
+        "slow",
+      ]);
       expect(tools.tools[1]?.description).toBe("Say farewell to a person.");
       expect(tools.tools[1]?.inputSchema).toMatchObject({ type: "object" });
       const result = await client.callTool({
@@ -39,7 +44,7 @@ describe("Nox integration", () => {
       await client.close();
       await rm(auditFile, { force: true });
     }
-  }, 15000);
+  }, 30000);
 
   it("returns an MCP error without executing the upstream handler", async () => {
     const auditFile = join(tmpdir(), `nox-denied-${Date.now()}.jsonl`);
@@ -364,4 +369,100 @@ describe("Nox integration", () => {
       await rm(policyFile, { force: true });
     }
   }, 15000);
+
+  it("returns an upstream error and handles a subsequent call", async () => {
+    const auditFile = join(tmpdir(), `nox-upstream-error-${Date.now()}.jsonl`);
+    const client = new Client({ name: "nox-integration-test", version: "1.0.0" });
+    const transport = new StdioClientTransport({
+      command: "npx",
+      args: ["tsx", "src/index.ts"],
+      env: { NOX_AUDIT_FILE: auditFile },
+    });
+
+    try {
+      await client.connect(transport);
+      const failed = await client.callTool({ name: "fail", arguments: {} });
+      expect(failed).toEqual({
+        content: [{ type: "text", text: "Upstream tool returned an error" }],
+        isError: true,
+      });
+
+      const subsequent = await client.callTool({
+        name: "farewell",
+        arguments: { name: "After failure" },
+      });
+      expect(subsequent).toMatchObject({
+        content: [{ type: "text", text: "Goodbye, After failure!" }],
+      });
+
+      const events = (await readFile(auditFile, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tool: "fail",
+            outcome: "error",
+            reason: "Upstream tool returned an error",
+          }),
+          expect.objectContaining({ tool: "farewell", outcome: "success" }),
+        ]),
+      );
+    } finally {
+      await client.close();
+      await rm(auditFile, { force: true });
+    }
+  }, 30000);
+
+  it("times out without retrying and handles a later independent call", async () => {
+    const auditFile = join(tmpdir(), `nox-upstream-timeout-${Date.now()}.jsonl`);
+    const policyFile = join(tmpdir(), `nox-upstream-timeout-policy-${Date.now()}.json`);
+    await writeFile(policyFile, JSON.stringify({ upstreamTimeoutMs: 10 }));
+    const client = new Client({ name: "nox-integration-test", version: "1.0.0" });
+    const transport = new StdioClientTransport({
+      command: "npx",
+      args: ["tsx", "src/index.ts"],
+      env: { NOX_POLICY_FILE: policyFile, NOX_AUDIT_FILE: auditFile },
+    });
+
+    try {
+      await client.connect(transport);
+      const timedOut = await client.callTool({
+        name: "slow",
+        arguments: { delayMs: 100 },
+      });
+      expect(timedOut).toEqual({
+        content: [{ type: "text", text: "Upstream tool call timed out" }],
+        isError: true,
+      });
+
+      const subsequent = await client.callTool({
+        name: "farewell",
+        arguments: { name: "After timeout" },
+      });
+      expect(subsequent).toMatchObject({
+        content: [{ type: "text", text: "Goodbye, After timeout!" }],
+      });
+
+      const events = (await readFile(auditFile, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tool: "slow",
+            outcome: "error",
+            reason: "Upstream call timed out",
+          }),
+          expect.objectContaining({ tool: "farewell", outcome: "success" }),
+        ]),
+      );
+    } finally {
+      await client.close();
+      await rm(auditFile, { force: true });
+      await rm(policyFile, { force: true });
+    }
+  }, 30000);
 });

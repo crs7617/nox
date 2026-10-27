@@ -27,7 +27,8 @@ The file contains only exact tool-name rules:
   "allow": ["greet"],
   "deny": ["dangerous-tool"],
   "approval": ["sensitive-tool"],
-  "approvalTimeoutMs": 30000
+  "approvalTimeoutMs": 30000,
+  "upstreamTimeoutMs": 30000
 }
 ```
 
@@ -52,6 +53,13 @@ protocol stdin. Enter `y` or `yes` to approve; any other response, EOF,
 unavailable terminal, or timeout rejects the call. Approval prompts are
 serialized, so concurrent calls cannot answer one another. The optional
 `NOX_APPROVAL_INPUT_FILE` is intended only for non-interactive test harnesses.
+
+`upstreamTimeoutMs` limits how long Nox waits for each upstream tool call.
+Timeouts return a valid MCP tool error, are audited as upstream timeouts, and
+do not automatically retry the call because tools may have side effects.
+The SDK transport does not guarantee cancellation when the local timeout wins;
+the upstream operation may continue in the background, so a timed-out call
+must not be retried automatically.
 
 ## Commands
 
