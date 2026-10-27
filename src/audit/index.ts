@@ -2,12 +2,14 @@ import { appendFile } from "node:fs/promises";
 
 export type AuditDecision = "allowed" | "denied";
 export type AuditOutcome = "success" | "error";
+export type AuditApproval = "approved" | "rejected" | "timed_out" | "unavailable";
 
 export type AuditEvent = {
   timestamp: string;
   tool: string;
   decision: AuditDecision;
   outcome: AuditOutcome;
+  approval?: AuditApproval;
   reason?: string;
 };
 
@@ -27,6 +29,7 @@ export function serializeAuditEvent(event: AuditEvent): string {
     tool: sanitizeAuditValue(event.tool),
     decision: event.decision,
     outcome: event.outcome,
+    ...(event.approval === undefined ? {} : { approval: event.approval }),
     ...(event.reason === undefined
       ? {}
       : { reason: sanitizeAuditValue(event.reason, 200) }),

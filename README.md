@@ -15,7 +15,9 @@ The file contains only exact tool-name rules:
 ```json
 {
   "allow": ["greet"],
-  "deny": ["dangerous-tool"]
+  "deny": ["dangerous-tool"],
+  "approval": ["sensitive-tool"],
+  "approvalTimeoutMs": 30000
 }
 ```
 
@@ -31,6 +33,14 @@ configuration error. Unknown fields, non-string rule values, and malformed
 JSON are also configuration errors. The compatibility variable
 `NOX_DENY_TOOLS` is a comma-separated list, for example
 `NOX_DENY_TOOLS=greet,other-tool`.
+
+Tools in `approval` must pass policy first and then require explicit human
+approval. Approval prompts are written only to stderr and read from the
+controlling terminal (`/dev/tty`, or `CONIN$` on Windows), never from the MCP
+protocol stdin. Enter `y` or `yes` to approve; any other response, EOF,
+unavailable terminal, or timeout rejects the call. Approval prompts are
+serialized, so concurrent calls cannot answer one another. The optional
+`NOX_APPROVAL_INPUT_FILE` is intended only for non-interactive test harnesses.
 
 ## Commands
 
@@ -62,7 +72,9 @@ override the path. Each event contains only:
 Denied events have `"decision": "denied"` and `"outcome": "error"`, plus a
 safe policy reason when available. Tool names and reasons are bounded and
 sanitized. Arguments, results, secrets, environment-variable values, and raw
-error objects or messages are never written.
+error objects or messages are never written. Approval-gated events also
+contain `"approval": "approved"`, `"rejected"`, `"timed_out"`, or
+`"unavailable"`.
 
 Writes are append-only and serialized so concurrent events do not overlap.
 Audit writes are asynchronous, and a filesystem failure does not stop the

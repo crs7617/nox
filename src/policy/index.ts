@@ -9,11 +9,13 @@ export type PolicyDecision = {
 export type PolicyConfig = {
   allow: string[];
   deny: string[];
+  approval: string[];
+  approvalTimeoutMs: number;
 };
 
 export class PolicyConfigurationError extends Error {}
 
-const emptyPolicy: PolicyConfig = { allow: [], deny: [] };
+const emptyPolicy: PolicyConfig = { allow: [], deny: [], approval: [], approvalTimeoutMs: 30000 };
 
 function validateRuleList(value: unknown, name: string): string[] {
   if (!Array.isArray(value) || value.some((rule) => typeof rule !== "string" || rule.trim() === "")) {
@@ -29,13 +31,25 @@ export function parsePolicyConfiguration(value: unknown): PolicyConfig {
   }
 
   const record = value as Record<string, unknown>;
-  const unknownKeys = Object.keys(record).filter((key) => key !== "allow" && key !== "deny");
+  const unknownKeys = Object.keys(record).filter(
+    (key) => !["allow", "deny", "approval", "approvalTimeoutMs"].includes(key),
+  );
   if (unknownKeys.length > 0) {
     throw new PolicyConfigurationError(`Unknown policy field(s): ${unknownKeys.join(", ")}`);
   }
 
   const allow = record.allow === undefined ? [] : validateRuleList(record.allow, "allow");
   const deny = record.deny === undefined ? [] : validateRuleList(record.deny, "deny");
+  const approval =
+    record.approval === undefined ? [] : validateRuleList(record.approval, "approval");
+  const approvalTimeoutMs = record.approvalTimeoutMs ?? 30000;
+  if (
+    typeof approvalTimeoutMs !== "number" ||
+    !Number.isInteger(approvalTimeoutMs) ||
+    approvalTimeoutMs <= 0
+  ) {
+    throw new PolicyConfigurationError("approvalTimeoutMs must be a positive integer");
+  }
   const overlap = allow.filter((tool) => deny.includes(tool));
   if (overlap.length > 0) {
     throw new PolicyConfigurationError(
@@ -43,7 +57,7 @@ export function parsePolicyConfiguration(value: unknown): PolicyConfig {
     );
   }
 
-  return { allow, deny };
+  return { allow, deny, approval, approvalTimeoutMs };
 }
 
 export function loadPolicyConfiguration(

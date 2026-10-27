@@ -8,7 +8,14 @@ import {
 
 describe("policy engine", () => {
   it("allows tools by default", () => {
-    expect(createPolicyEngine({ allow: [], deny: [] }).evaluate("greet")).toEqual({
+    expect(
+      createPolicyEngine({
+        allow: [],
+        deny: [],
+        approval: [],
+        approvalTimeoutMs: 30000,
+      }).evaluate("greet"),
+    ).toEqual({
       allowed: true,
       reason: "Allowed by policy",
     });
@@ -16,7 +23,12 @@ describe("policy engine", () => {
 
   it("denies tools listed in deny rules", () => {
     expect(
-      createPolicyEngine({ allow: [], deny: ["greet"] }).evaluate("greet"),
+      createPolicyEngine({
+        allow: [],
+        deny: ["greet"],
+        approval: [],
+        approvalTimeoutMs: 30000,
+      }).evaluate("greet"),
     ).toEqual({
       allowed: false,
       reason: "Denied by policy file",
@@ -25,7 +37,12 @@ describe("policy engine", () => {
 
   it("gives deny rules precedence over allow rules", () => {
     expect(
-      createPolicyEngine({ allow: ["greet"], deny: ["other"] }).evaluate("other"),
+      createPolicyEngine({
+        allow: ["greet"],
+        deny: ["other"],
+        approval: [],
+        approvalTimeoutMs: 30000,
+      }).evaluate("other"),
     ).toEqual({
       allowed: false,
       reason: "Denied by policy file",
@@ -42,7 +59,10 @@ describe("policy engine", () => {
   });
 
   it("lets the environment deny tools without overriding a deny", () => {
-    const policy = createPolicyEngine({ allow: ["greet"], deny: [] }, ["greet"]);
+    const policy = createPolicyEngine(
+      { allow: ["greet"], deny: [], approval: [], approvalTimeoutMs: 30000 },
+      ["greet"],
+    );
     expect(policy.evaluate("greet")).toEqual({
       allowed: false,
       reason: "Denied by NOX_DENY_TOOLS",
