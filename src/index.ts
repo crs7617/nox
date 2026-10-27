@@ -13,6 +13,7 @@ import {
   loadPolicyConfiguration,
   parseEnvironmentDeniedTools,
 } from "./policy/index.js";
+import { AuditLogger } from "./audit/index.js";
 
 const upstream = new Client({
   name: "nox-upstream-client",
@@ -35,6 +36,7 @@ async function main() {
       loadPolicyConfiguration(),
       parseEnvironmentDeniedTools(),
     );
+    const audit = new AuditLogger();
 
     // Nox acts as an MCP client to the upstream server.
     await upstream.connect(upstreamTransport);
@@ -52,6 +54,13 @@ async function main() {
         const decision = policy.evaluate("greet");
         if (!decision.allowed) {
           console.error(`[NOX] DENIED tool=greet reason=${decision.reason}`);
+          await audit.write({
+            timestamp: new Date().toISOString(),
+            tool: "greet",
+            decision: "denied",
+            outcome: "error",
+            reason: decision.reason,
+          });
           return {
             content: [
               { type: "text", text: `Blocked by Nox policy: ${decision.reason}` },
@@ -62,19 +71,36 @@ async function main() {
 
         console.error(`[NOX] ALLOWED tool=greet reason=${decision.reason}`);
 
-        const result = await upstream.callTool(
-          {
-            name: "greet",
-            arguments: { name },
-          },
-          CallToolResultSchema,
-        );
+        try {
+          const result = await upstream.callTool(
+            {
+              name: "greet",
+              arguments: { name },
+            },
+            CallToolResultSchema,
+          );
 
-        if (!("content" in result)) {
-          throw new Error("Upstream returned a task result instead of a tool result");
+          if (!("content" in result)) {
+            throw new Error("invalid upstream result");
+          }
+
+          await audit.write({
+            timestamp: new Date().toISOString(),
+            tool: "greet",
+            decision: "allowed",
+            outcome: result.isError ? "error" : "success",
+          });
+          return result as CallToolResult;
+        } catch {
+          await audit.write({
+            timestamp: new Date().toISOString(),
+            tool: "greet",
+            decision: "allowed",
+            outcome: "error",
+            reason: "Upstream call failed",
+          });
+          throw new Error("Upstream tool call failed");
         }
-
-        return result as CallToolResult;
       },
     );
 
@@ -91,7 +117,10 @@ async function main() {
     await upstream.close();
     await nox.close();
   } catch (error) {
-    console.error("[NOX] Startup failed:", error);
+    console.error(
+      "[NOX] Startup failed:",
+      error instanceof Error ? error.message.slice(0, 200) : "Unknown startup error",
+    );
     await upstream.close().catch(() => {});
     process.exitCode = 1;
   }

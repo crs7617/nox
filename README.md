@@ -43,3 +43,35 @@ NOX_DENY_TOOLS=greet npm run demo-client
 
 All protocol messages use stdout. Nox diagnostics and upstream demo-handler
 diagnostics use stderr.
+
+## Audit logging
+
+Nox appends one privacy-conscious JSONL event for every tool invocation to
+`nox-audit.jsonl` in the project working directory. Set `NOX_AUDIT_FILE` to
+override the path. Each event contains only:
+
+```json
+{
+  "timestamp": "2026-10-27T12:00:00.000Z",
+  "tool": "greet",
+  "decision": "allowed",
+  "outcome": "success"
+}
+```
+
+Denied events have `"decision": "denied"` and `"outcome": "error"`, plus a
+safe policy reason when available. Tool names and reasons are bounded and
+sanitized. Arguments, results, secrets, environment-variable values, and raw
+error objects or messages are never written.
+
+Writes are append-only and serialized so concurrent events do not overlap.
+Audit writes are asynchronous, and a filesystem failure does not stop the
+gateway or turn into a false persistence claim; Nox emits a clear stderr
+warning and that event may be missing from the audit file.
+
+Run the build and all tests with:
+
+```sh
+npm run build
+npm test
+```
