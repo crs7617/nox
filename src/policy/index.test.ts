@@ -14,6 +14,7 @@ describe("policy engine", () => {
         deny: [],
         approval: [],
         approvalTimeoutMs: 30000,
+        upstreamTimeoutMs: 30000,
       }).evaluate("greet"),
     ).toEqual({
       allowed: true,
@@ -28,6 +29,7 @@ describe("policy engine", () => {
         deny: ["greet"],
         approval: [],
         approvalTimeoutMs: 30000,
+        upstreamTimeoutMs: 30000,
       }).evaluate("greet"),
     ).toEqual({
       allowed: false,
@@ -42,6 +44,7 @@ describe("policy engine", () => {
         deny: ["other"],
         approval: [],
         approvalTimeoutMs: 30000,
+        upstreamTimeoutMs: 30000,
       }).evaluate("other"),
     ).toEqual({
       allowed: false,
@@ -56,11 +59,20 @@ describe("policy engine", () => {
     expect(() =>
       parsePolicyConfiguration({ allow: ["greet"], deny: ["greet"] }),
     ).toThrow(/Contradictory/);
+    expect(() => parsePolicyConfiguration({ upstreamTimeoutMs: 0 })).toThrow(
+      /upstreamTimeoutMs/,
+    );
   });
 
   it("lets the environment deny tools without overriding a deny", () => {
     const policy = createPolicyEngine(
-      { allow: ["greet"], deny: [], approval: [], approvalTimeoutMs: 30000 },
+      {
+        allow: ["greet"],
+        deny: [],
+        approval: [],
+        approvalTimeoutMs: 30000,
+        upstreamTimeoutMs: 30000,
+      },
       ["greet"],
     );
     expect(policy.evaluate("greet")).toEqual({

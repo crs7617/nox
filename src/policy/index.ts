@@ -11,11 +11,18 @@ export type PolicyConfig = {
   deny: string[];
   approval: string[];
   approvalTimeoutMs: number;
-};
+  upstreamTimeoutMs: number;
+}
 
 export class PolicyConfigurationError extends Error {}
 
-const emptyPolicy: PolicyConfig = { allow: [], deny: [], approval: [], approvalTimeoutMs: 30000 };
+const emptyPolicy: PolicyConfig = {
+  allow: [],
+  deny: [],
+  approval: [],
+  approvalTimeoutMs: 30000,
+  upstreamTimeoutMs: 30000,
+};
 
 function validateRuleList(value: unknown, name: string): string[] {
   if (!Array.isArray(value) || value.some((rule) => typeof rule !== "string" || rule.trim() === "")) {
@@ -32,7 +39,8 @@ export function parsePolicyConfiguration(value: unknown): PolicyConfig {
 
   const record = value as Record<string, unknown>;
   const unknownKeys = Object.keys(record).filter(
-    (key) => !["allow", "deny", "approval", "approvalTimeoutMs"].includes(key),
+    (key) =>
+      !["allow", "deny", "approval", "approvalTimeoutMs", "upstreamTimeoutMs"].includes(key),
   );
   if (unknownKeys.length > 0) {
     throw new PolicyConfigurationError(`Unknown policy field(s): ${unknownKeys.join(", ")}`);
@@ -43,12 +51,20 @@ export function parsePolicyConfiguration(value: unknown): PolicyConfig {
   const approval =
     record.approval === undefined ? [] : validateRuleList(record.approval, "approval");
   const approvalTimeoutMs = record.approvalTimeoutMs ?? 30000;
+  const upstreamTimeoutMs = record.upstreamTimeoutMs ?? 30000;
   if (
     typeof approvalTimeoutMs !== "number" ||
     !Number.isInteger(approvalTimeoutMs) ||
     approvalTimeoutMs <= 0
   ) {
     throw new PolicyConfigurationError("approvalTimeoutMs must be a positive integer");
+  }
+  if (
+    typeof upstreamTimeoutMs !== "number" ||
+    !Number.isInteger(upstreamTimeoutMs) ||
+    upstreamTimeoutMs <= 0
+  ) {
+    throw new PolicyConfigurationError("upstreamTimeoutMs must be a positive integer");
   }
   const overlap = allow.filter((tool) => deny.includes(tool));
   if (overlap.length > 0) {
@@ -57,7 +73,7 @@ export function parsePolicyConfiguration(value: unknown): PolicyConfig {
     );
   }
 
-  return { allow, deny, approval, approvalTimeoutMs };
+  return { allow, deny, approval, approvalTimeoutMs, upstreamTimeoutMs };
 }
 
 export function loadPolicyConfiguration(

@@ -17,6 +17,7 @@ import {
 import { AuditLogger } from "./audit/index.js";
 import { ApprovalManager, type ApprovalResult } from "./approval/index.js";
 import { discoverTools } from "./discovery/index.js";
+import { UpstreamTimeoutError, withUpstreamTimeout } from "./resilience/index.js";
 
 const upstream = new Client({
   name: "nox-upstream-client",
@@ -43,6 +44,7 @@ async function main() {
       new Set(policyConfig.approval),
       policyConfig.approvalTimeoutMs,
     );
+    const upstreamTimeoutMs = policyConfig.upstreamTimeoutMs;
     const audit = new AuditLogger();
 
     // Nox acts as an MCP client to the upstream server.
@@ -119,12 +121,15 @@ async function main() {
       console.error(`[NOX] ALLOWED tool=${toolName} reason=${decision.reason}`);
 
       try {
-          const result = await upstream.callTool(
-            {
-              name: toolName,
-              arguments: request.params.arguments,
-            },
-            CallToolResultSchema,
+          const result = await withUpstreamTimeout(
+            upstream.callTool(
+              {
+                name: toolName,
+                arguments: request.params.arguments,
+              },
+              CallToolResultSchema,
+            ),
+            upstreamTimeoutMs,
           );
 
           if (!("content" in result)) {
@@ -137,19 +142,34 @@ async function main() {
             decision: "allowed",
             ...(approvalDecision === undefined ? {} : { approval: approvalDecision }),
             outcome: result.isError ? "error" : "success",
+            ...(result.isError ? { reason: "Upstream tool returned an error" } : {}),
           });
+          if (result.isError) {
+            return {
+              content: [{ type: "text", text: "Upstream tool returned an error" }],
+              isError: true,
+            };
+          }
           return result as CallToolResult;
-      } catch {
+      } catch (error) {
+          const timedOut = error instanceof UpstreamTimeoutError;
           await audit.write({
             timestamp: new Date().toISOString(),
             tool: toolName,
             decision: "allowed",
             ...(approvalDecision === undefined ? {} : { approval: approvalDecision }),
             outcome: "error",
-            reason: "Upstream call failed",
+            reason: timedOut ? "Upstream call timed out" : "Upstream call failed",
           });
           return {
-            content: [{ type: "text", text: "Upstream tool call failed" }],
+            content: [
+              {
+                type: "text",
+                text: timedOut
+                  ? "Upstream tool call timed out"
+                  : "Upstream tool call failed",
+              },
+            ],
             isError: true,
           };
         }
