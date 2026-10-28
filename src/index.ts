@@ -1,6 +1,5 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -18,6 +17,7 @@ import { AuditLogger } from "./audit/index.js";
 import { ApprovalManager, type ApprovalResult } from "./approval/index.js";
 import { discoverTools } from "./discovery/index.js";
 import { UpstreamTimeoutError, withUpstreamTimeout } from "./resilience/index.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   createUpstreamTransport,
   loadUpstreamConfiguration,
@@ -44,7 +44,7 @@ async function main() {
     name: "nox-upstream-client",
     version: "1.0.0",
   });
-  let upstreamTransport: StdioClientTransport | undefined;
+  let upstreamTransport: Transport | undefined;
   try {
     const upstreamConfiguration = loadUpstreamConfiguration();
     upstreamTransport = createUpstreamTransport(upstreamConfiguration);

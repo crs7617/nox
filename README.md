@@ -10,8 +10,9 @@ At startup, Nox discovers the upstream server's tools and exposes their names, d
 
 Upstream failures and timeouts return safe MCP errors. Nox does not automatically retry calls, since tools may have side effects.
 
-Nox supports local MCP servers that communicate over stdio. Remote MCP
-transports are not supported.
+Nox supports local MCP servers over stdio and upstream MCP servers over
+Streamable HTTP. Remote HTTP connections do not change the downstream stdio
+interface.
 
 ## Features
 
@@ -87,6 +88,30 @@ $env:NOX_UPSTREAM_FILE = "$PWD\nox-upstream.json"
 npm run demo-client
 ```
 
+For a Streamable HTTP upstream, use an explicit transport configuration:
+
+```json
+{
+  "transport": "http",
+  "url": "https://mcp.example.test/mcp"
+}
+```
+
+Set `NOX_UPSTREAM_FILE` to this file, or use:
+
+```powershell
+$env:NOX_UPSTREAM_TRANSPORT = "http"
+$env:NOX_UPSTREAM_URL = "https://mcp.example.test/mcp"
+npm run dev
+```
+
+HTTPS is required for non-loopback HTTP upstreams. Plain HTTP is accepted only
+for `localhost`, `127.0.0.1`, or `::1`, which supports controlled local
+development and tests. Nox does not provide authentication in this milestone;
+place the upstream behind a trusted network boundary and configure TLS and
+authentication outside Nox as appropriate. The SDK transport is configured
+with zero reconnection retries, and Nox never retries tool calls.
+
 For a reproducible end-to-end check using the independent local fixture in
 [`src/local-test-server.ts`](./src/local-test-server.ts), run:
 
@@ -99,6 +124,13 @@ discovered tools and their metadata, invokes `add`, and confirms that a
 policy-denied tool does not reach its upstream handler. It also verifies safe
 startup failure for an unavailable executable. The fixture writes diagnostics
 only to stderr, as required for stdio MCP servers.
+
+The controlled Streamable HTTP integration test starts an in-process local MCP
+HTTP server and does not contact a public service:
+
+```sh
+npx vitest run src/http-mcp.integration.test.ts
+```
 
 Nox validates the configuration before starting the downstream MCP connection.
 Missing executables, upstream initialization failures, invalid tool discovery,
@@ -151,7 +183,7 @@ retry timed-out or failed calls.
 
 ### Stage 3 — Remote support and hardening
 
-- [ ] Remote Streamable HTTP transport, including authentication where appropriate
+- [x] Remote Streamable HTTP transport without built-in authentication
 - [ ] Security tests for malformed input, secrets handling, and failure cases
 - [ ] Reproducible demo and security documentation
 
