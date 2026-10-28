@@ -87,6 +87,19 @@ $env:NOX_UPSTREAM_FILE = "$PWD\nox-upstream.json"
 npm run demo-client
 ```
 
+For a reproducible end-to-end check using the independent local fixture in
+[`src/local-test-server.ts`](./src/local-test-server.ts), run:
+
+```sh
+npx vitest run src/local-mcp.integration.test.ts
+```
+
+That test starts the separate stdio server through Nox, verifies both
+discovered tools and their metadata, invokes `add`, and confirms that a
+policy-denied tool does not reach its upstream handler. It also verifies safe
+startup failure for an unavailable executable. The fixture writes diagnostics
+only to stderr, as required for stdio MCP servers.
+
 Nox validates the configuration before starting the downstream MCP connection.
 Missing executables, upstream initialization failures, invalid tool discovery,
 and shutdown failures are reported as safe diagnostics on stderr; raw
