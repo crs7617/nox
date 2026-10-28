@@ -239,6 +239,9 @@ async function main() {
             return httpTransport.handleRequest(request, response);
           })
           .catch(() => {
+            if (response.headersSent) {
+              return;
+            }
             response.writeHead(503, { "content-type": "application/json" });
             response.end(JSON.stringify({ error: "Authentication unavailable" }));
           });

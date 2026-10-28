@@ -67,7 +67,8 @@ describe("Nox remote client authentication", () => {
   it("accepts valid tokens and rejects missing, invalid, and revoked tokens", async () => {
     const tokenPath = join(tmpdir(), `nox-auth-${Date.now()}.json`);
     const created = createToken();
-    const tokenFile: TokenFile = { tokens: [created.record] };
+    const expired = createToken(new Date(Date.now() - 1000).toISOString());
+    const tokenFile: TokenFile = { tokens: [created.record, expired.record] };
     await saveTokenFile(tokenPath, tokenFile);
     const port = await unusedPort();
     const nox = await startNox(tokenPath, port);
@@ -82,6 +83,23 @@ describe("Nox remote client authentication", () => {
         body: "{}",
       });
       expect(invalid.status).toBe(401);
+      const expiredResponse = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${expired.plaintext}` },
+        body: "{}",
+      });
+      expect(expiredResponse.status).toBe(401);
+
+      const malformed = await fetch(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${created.plaintext}`,
+          "content-type": "application/json",
+        },
+        body: `not-json-${created.plaintext}`,
+      });
+      expect(malformed.status).toBeGreaterThanOrEqual(400);
+      expect(await malformed.text()).not.toContain(created.plaintext);
 
       const client = new Client({ name: "remote-auth-test", version: "1.0.0" });
       const transport = new StreamableHTTPClientTransport(new URL(url), {

@@ -9,7 +9,15 @@ export async function discoverTools(client: Pick<Client, "listTools">): Promise<
 
   const names = new Set<string>();
   for (const tool of response.tools) {
-    if (typeof tool.name !== "string" || tool.name.length === 0 || names.has(tool.name)) {
+    if (
+      typeof tool.name !== "string" ||
+      tool.name.length === 0 ||
+      names.has(tool.name) ||
+      typeof tool.inputSchema !== "object" ||
+      tool.inputSchema === null ||
+      Array.isArray(tool.inputSchema) ||
+      (tool.description !== undefined && typeof tool.description !== "string")
+    ) {
       throw new Error("Upstream returned an invalid tool list");
     }
     names.add(tool.name);

@@ -169,6 +169,28 @@ endpoint until it expires or is revoked. Use HTTPS for non-loopback listeners;
 Nox does not implement OAuth, token rotation, per-user permissions, or a
 dashboard.
 
+## Tested security guarantees and limitations
+
+The security-hardening tests use local fixtures only. They verify malformed
+policy and upstream configuration rejection, malformed tool discovery
+rejection, unknown/denied tool behavior, missing/invalid/expired/revoked PAT
+denial, hash-only token persistence, restrictive token-file permissions,
+approval rejection/timeout/unavailability fail-closed behavior, timeout
+without retry, malformed HTTP requests, upstream connection failures, and
+cleanup of failed authentication test processes. Audit serialization tests
+verify that raw arguments, results, credentials, authorization headers, and
+raw exception text are not included in the generated event shape.
+
+These are tested properties of the current implementation, not a substitute
+for deployment controls. Nox cannot detect secrets embedded in arbitrary
+operator-supplied policy reasons, protect a token file from a user who can
+read it, or provide endpoint rate limiting, token rotation, OAuth, or
+per-user authorization. Unix token-file mode enforcement is tested on POSIX
+systems; Windows deployments must use filesystem ACLs because Windows does
+not expose equivalent Unix mode semantics through Node's file mode field.
+Use filesystem permissions/ACLs, HTTPS, network controls, and operational
+monitoring appropriate to the deployment.
+
 For a reproducible end-to-end check using the independent local fixture in
 [`src/local-test-server.ts`](./src/local-test-server.ts), run:
 

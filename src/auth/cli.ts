@@ -9,8 +9,12 @@ async function main(): Promise<void> {
   try {
     await access(path);
     tokenFile = await loadTokenFile(path);
-  } catch {
-    tokenFile = { tokens: [] };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      tokenFile = { tokens: [] };
+    } else {
+      throw error;
+    }
   }
   if (command === "create") {
     const created = createToken(process.argv[3]);
