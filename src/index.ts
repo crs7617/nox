@@ -18,16 +18,11 @@ import { AuditLogger } from "./audit/index.js";
 import { ApprovalManager, type ApprovalResult } from "./approval/index.js";
 import { discoverTools } from "./discovery/index.js";
 import { UpstreamTimeoutError, withUpstreamTimeout } from "./resilience/index.js";
-
-const upstream = new Client({
-  name: "nox-upstream-client",
-  version: "1.0.0",
-});
-
-const upstreamTransport = new StdioClientTransport({
-  command: "npx",
-  args: ["tsx", "src/demo-server.ts"],
-});
+import {
+  createUpstreamTransport,
+  loadUpstreamConfiguration,
+  UpstreamConfigurationError,
+} from "./upstream/index.js";
 
 const nox = new Server({
   name: "nox",
@@ -36,8 +31,23 @@ const nox = new Server({
   capabilities: { tools: {} },
 });
 
-async function main() {
+async function closeResource(name: string, close: () => Promise<void>): Promise<void> {
   try {
+    await close();
+  } catch {
+    console.error(`[NOX] ${name} cleanup failed`);
+  }
+}
+
+async function main() {
+  const upstream = new Client({
+    name: "nox-upstream-client",
+    version: "1.0.0",
+  });
+  let upstreamTransport: StdioClientTransport | undefined;
+  try {
+    const upstreamConfiguration = loadUpstreamConfiguration();
+    upstreamTransport = createUpstreamTransport(upstreamConfiguration);
     const policyConfig = loadPolicyConfiguration();
     const policy = createPolicyEngine(policyConfig, parseEnvironmentDeniedTools());
     const approval = new ApprovalManager(
@@ -185,15 +195,20 @@ async function main() {
       process.stdin.once("error", reject);
     });
 
-    await upstream.close();
-    await nox.close();
   } catch (error) {
-    console.error(
-      "[NOX] Startup failed:",
-      error instanceof Error ? error.message.slice(0, 200) : "Unknown startup error",
-    );
-    await upstream.close().catch(() => {});
+    if (error instanceof UpstreamConfigurationError) {
+      console.error(`[NOX] Startup failed: ${error.message}`);
+    } else {
+      console.error("[NOX] Startup failed: upstream unavailable");
+    }
     process.exitCode = 1;
+  } finally {
+    await closeResource("downstream", () => nox.close());
+    await closeResource("upstream client", () => upstream.close());
+    if (upstreamTransport !== undefined) {
+      const transport = upstreamTransport;
+      await closeResource("upstream transport", () => transport.close());
+    }
   }
 }
 

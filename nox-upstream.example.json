@@ -1,0 +1,4 @@
+{
+  "command": "npx",
+  "args": ["tsx", "src/demo-server.ts"]
+}

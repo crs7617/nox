@@ -10,7 +10,8 @@ At startup, Nox discovers the upstream server's tools and exposes their names, d
 
 Upstream failures and timeouts return safe MCP errors. Nox does not automatically retry calls, since tools may have side effects.
 
-**Current limitation:** Nox currently launches a fixed local demo server. Configurable upstream servers and remote MCP connections are planned.
+Nox supports local MCP servers that communicate over stdio. Remote MCP
+transports are not supported.
 
 ## Features
 
@@ -33,8 +34,8 @@ npm run demo-client
 ```
 
 `npm run demo-client` starts the demo client, which starts Nox; Nox starts the
-demo upstream server. The demo client prints the discovered tools and calls
-`greet`.
+demo upstream server using the default configuration. The demo client prints
+the discovered tools and calls `greet`.
 
 ## Configuration
 
@@ -51,6 +52,49 @@ and validate.
   "upstreamTimeoutMs": 30000
 }
 ```
+
+The upstream is configured separately. By default Nox launches
+`npx tsx src/demo-server.ts`, preserving the demo workflow. To select a
+different local stdio server, set `NOX_UPSTREAM_FILE` to a JSON file such as
+[`nox-upstream.example.json`](./nox-upstream.example.json):
+
+```json
+{
+  "command": "python",
+  "args": ["server.py", "--profile", "safe mode"]
+}
+```
+
+The `command` is the executable and `args` is an array of individual
+arguments. Nox passes them directly to the MCP SDK's
+`StdioClientTransport`; it does not invoke a shell or parse a command string.
+The file must contain only a non-empty `command` and an optional string-array
+`args`. An explicitly selected file must exist and validate. For simple
+deployments, the same values can be supplied without a file:
+
+```powershell
+$env:NOX_UPSTREAM_COMMAND = "python"
+$env:NOX_UPSTREAM_ARGS = '["server.py", "--profile", "safe mode"]'
+npm run dev
+```
+
+`NOX_UPSTREAM_ARGS` must be valid JSON. The file setting takes precedence over
+the environment settings; setting only one environment variable is invalid.
+For example, to run the demo client against a custom server:
+
+```powershell
+$env:NOX_UPSTREAM_FILE = "$PWD\nox-upstream.json"
+npm run demo-client
+```
+
+Nox validates the configuration before starting the downstream MCP connection.
+Missing executables, upstream initialization failures, invalid tool discovery,
+and shutdown failures are reported as safe diagnostics on stderr; raw
+exceptions, tool arguments, results, credentials, and environment values are
+not logged. The executable and arguments are still local process configuration:
+use trusted files and paths, and avoid putting secrets in arguments because
+operating-system process listings may expose them. The upstream inherits only
+the environment variables permitted by the MCP SDK's stdio transport.
 
 Rules use exact tool names. `NOX_DENY_TOOLS` is a comma-separated deny
 override. Denies are evaluated before the allow list; a non-empty `allow`
@@ -87,10 +131,10 @@ retry timed-out or failed calls.
 
 ### Stage 2 — Real MCP integrations
 
-- [ ] Configurable upstream server commands and arguments
-- [ ] Support for real local stdio MCP servers
-- [ ] End-to-end test with a real MCP server and compatible client
-- [ ] Document server configuration and operational limitations
+- [x] Configurable upstream server commands and arguments
+- [x] Support for real local stdio MCP servers
+- [x] End-to-end test with a real MCP server and compatible client
+- [x] Document server configuration and operational limitations
 
 ### Stage 3 — Remote support and hardening
 
@@ -98,6 +142,5 @@ retry timed-out or failed calls.
 - [ ] Security tests for malformed input, secrets handling, and failure cases
 - [ ] Reproducible demo and security documentation
 
-The Stage 2 and Stage 3 items are intentionally incomplete; Nox is a
-prototype until real upstream configuration and an end-to-end external
-integration are implemented.
+Stage 3 remains intentionally incomplete; Nox is still a prototype for remote
+transport and broader hardening.
