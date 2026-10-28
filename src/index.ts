@@ -1,7 +1,10 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { randomUUID } from "node:crypto";
+import { createServer, type Server as HttpServer } from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   CallToolResultSchema,
@@ -23,6 +26,12 @@ import {
   loadUpstreamConfiguration,
   UpstreamConfigurationError,
 } from "./upstream/index.js";
+import {
+  authenticateToken,
+  bearerToken,
+  loadTokenFile,
+  type TokenFile,
+} from "./auth/index.js";
 
 const nox = new Server({
   name: "nox",
@@ -45,6 +54,8 @@ async function main() {
     version: "1.0.0",
   });
   let upstreamTransport: Transport | undefined;
+  let downstreamTransport: StdioServerTransport | StreamableHTTPServerTransport | undefined;
+  let httpServer: HttpServer | undefined;
   try {
     const upstreamConfiguration = loadUpstreamConfiguration();
     upstreamTransport = createUpstreamTransport(upstreamConfiguration);
@@ -185,15 +196,76 @@ async function main() {
         }
     });
 
-    const downstreamTransport = new StdioServerTransport();
+    const downstreamMode = process.env.NOX_DOWNSTREAM_TRANSPORT ?? "stdio";
+    if (downstreamMode !== "stdio" && downstreamMode !== "http") {
+      throw new UpstreamConfigurationError(
+        "NOX_DOWNSTREAM_TRANSPORT must be \"stdio\" or \"http\"",
+      );
+    }
+
+    if (downstreamMode === "stdio") {
+      downstreamTransport = new StdioServerTransport();
+    } else {
+      const tokenPath = process.env.NOX_AUTH_TOKEN_FILE;
+      if (tokenPath === undefined || tokenPath.trim() === "") {
+        throw new UpstreamConfigurationError(
+          "NOX_AUTH_TOKEN_FILE is required for HTTP downstream transport",
+        );
+      }
+      const tokenFile: TokenFile = await loadTokenFile(tokenPath);
+      if (tokenFile.tokens.length === 0) {
+        throw new UpstreamConfigurationError("HTTP downstream token store is empty");
+      }
+      const port = Number(process.env.NOX_DOWNSTREAM_PORT ?? "3000");
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new UpstreamConfigurationError("NOX_DOWNSTREAM_PORT must be a valid TCP port");
+      }
+      const host = process.env.NOX_DOWNSTREAM_HOST ?? "127.0.0.1";
+      const httpTransport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+      });
+      downstreamTransport = httpTransport;
+      httpServer = createServer((request, response) => {
+        void loadTokenFile(tokenPath)
+          .then((currentTokenFile) => {
+            if (!authenticateToken(currentTokenFile, bearerToken(request.headers.authorization))) {
+              response.writeHead(401, {
+                "content-type": "application/json",
+                "www-authenticate": "Bearer",
+              });
+              response.end(JSON.stringify({ error: "Unauthorized" }));
+              return;
+            }
+            return httpTransport.handleRequest(request, response);
+          })
+          .catch(() => {
+            response.writeHead(503, { "content-type": "application/json" });
+            response.end(JSON.stringify({ error: "Authentication unavailable" }));
+          });
+      });
+      await new Promise<void>((resolve, reject) => {
+        httpServer?.once("error", reject);
+        httpServer?.listen(port, host, resolve);
+      });
+    }
+    if (downstreamTransport === undefined) {
+      throw new Error("Downstream transport was not initialized");
+    }
     await nox.connect(downstreamTransport);
 
     console.error("[NOX] Gateway ready");
 
-    await new Promise<void>((resolve, reject) => {
-      process.stdin.once("end", resolve);
-      process.stdin.once("error", reject);
-    });
+    if (downstreamMode === "stdio") {
+      await new Promise<void>((resolve, reject) => {
+        process.stdin.once("end", resolve);
+        process.stdin.once("error", reject);
+      });
+    } else {
+      await new Promise<void>((resolve) => {
+        process.once("SIGINT", resolve);
+        process.once("SIGTERM", resolve);
+      });
+    }
 
   } catch (error) {
     if (error instanceof UpstreamConfigurationError) {
@@ -203,6 +275,15 @@ async function main() {
     }
     process.exitCode = 1;
   } finally {
+    if (httpServer !== undefined) {
+      await closeResource("HTTP listener", () =>
+        new Promise<void>((resolve, reject) =>
+          httpServer?.close((closeError) =>
+            closeError === undefined ? resolve() : reject(closeError),
+          ),
+        ),
+      );
+    }
     await closeResource("downstream", () => nox.close());
     await closeResource("upstream client", () => upstream.close());
     if (upstreamTransport !== undefined) {

@@ -8,7 +8,8 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "demo": "tsx src/demo-server.ts",
-    "demo-client": "tsx src/demo-client.ts"
+    "demo-client": "tsx src/demo-client.ts",
+    "auth-token": "tsx src/auth/cli.ts"
   },
   "repository": {
     "type": "git",

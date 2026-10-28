@@ -112,6 +112,63 @@ place the upstream behind a trusted network boundary and configure TLS and
 authentication outside Nox as appropriate. The SDK transport is configured
 with zero reconnection retries, and Nox never retries tool calls.
 
+## Remote client authentication
+
+The upstream configuration above controls how Nox connects to an upstream
+server. Client authentication is a separate boundary: it protects clients
+connecting to Nox's optional downstream HTTP listener and does not authenticate
+Nox to an upstream server.
+
+Local stdio mode remains the default and does not require a PAT. To expose Nox
+over Streamable HTTP, configure the downstream listener and a token file:
+
+```powershell
+$env:NOX_DOWNSTREAM_TRANSPORT = "http"
+$env:NOX_DOWNSTREAM_HOST = "127.0.0.1"
+$env:NOX_DOWNSTREAM_PORT = "3000"
+$env:NOX_AUTH_TOKEN_FILE = "$PWD\nox-tokens.json"
+npm run dev
+```
+
+Create a token once and save the displayed secret securely:
+
+```powershell
+$env:NOX_AUTH_TOKEN_FILE = "$PWD\nox-tokens.json"
+npm run auth-token -- create
+```
+
+The command prints the newly generated token once. The token file stores only
+its SHA-256 hash, token id, optional expiration, and optional revocation time;
+the plaintext token is never written to disk. Protect the file with restrictive
+filesystem permissions and do not commit it. An optional ISO expiration can be
+provided:
+
+```powershell
+npm run auth-token -- create 2027-01-01T00:00:00.000Z
+```
+
+Clients must send the token as an HTTP header:
+
+```http
+Authorization: Bearer <token>
+```
+
+Revoke a token by its id from `nox-tokens.json`:
+
+```powershell
+npm run auth-token -- revoke <token-id>
+```
+
+Nox reloads the token file for each HTTP request, so revocation takes effect
+without restarting the process. Missing, malformed, expired, revoked, and
+invalid credentials receive HTTP 401 before MCP initialization, discovery, or
+tool execution. Authentication failures do not include token values or
+authorization headers in diagnostics or audit events. This is bearer-token
+authentication: anyone who obtains a valid token can use the protected Nox
+endpoint until it expires or is revoked. Use HTTPS for non-loopback listeners;
+Nox does not implement OAuth, token rotation, per-user permissions, or a
+dashboard.
+
 For a reproducible end-to-end check using the independent local fixture in
 [`src/local-test-server.ts`](./src/local-test-server.ts), run:
 
