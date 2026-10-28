@@ -1,5 +1,5 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 
 export type TokenRecord = {
   id: string;
@@ -36,10 +36,16 @@ function validateRecord(record: unknown): TokenRecord {
   ) {
     throw new AuthenticationConfigurationError("Token store contains an invalid token");
   }
-  if (value.expiresAt !== undefined && typeof value.expiresAt !== "string") {
+  if (
+    value.expiresAt !== undefined &&
+    (typeof value.expiresAt !== "string" || Number.isNaN(Date.parse(value.expiresAt)))
+  ) {
     throw new AuthenticationConfigurationError("Token expiration is invalid");
   }
-  if (value.revokedAt !== undefined && typeof value.revokedAt !== "string") {
+  if (
+    value.revokedAt !== undefined &&
+    (typeof value.revokedAt !== "string" || Number.isNaN(Date.parse(value.revokedAt)))
+  ) {
     throw new AuthenticationConfigurationError("Token revocation is invalid");
   }
   return {
@@ -70,6 +76,7 @@ export async function saveTokenFile(path: string, tokenFile: TokenFile): Promise
     encoding: "utf8",
     mode: 0o600,
   });
+  await chmod(path, 0o600);
 }
 
 export function createToken(expiresAt?: string): { plaintext: string; record: TokenRecord } {
