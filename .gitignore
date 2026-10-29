@@ -43,3 +43,6 @@ Desktop.ini
 # Temporary files
 *.tmp
 *.bak
+
+# Next.js generated build output
+frontend/.next/

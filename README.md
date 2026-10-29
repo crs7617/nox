@@ -43,6 +43,33 @@ The package scripts are:
 | `npm run dev` | Start Nox |
 | `npm run auth-token -- ...` | Create or revoke a downstream PAT |
 
+## Frontend foundation
+
+The frontend is an isolated Next.js App Router application under
+[`frontend/`](./frontend). It does not replace or import the gateway entry
+point. Install and run it separately:
+
+```powershell
+npm install --prefix frontend
+$env:NOX_AUDIT_FILE = "$PWD\nox-audit.jsonl"
+npm run dev --prefix frontend
+```
+
+Open `http://localhost:3000`. The Audit logs screen reads only the existing
+sanitized JSONL audit schema through a read-only server route. It does not
+control the gateway, expose tokens or tool arguments, or use the MCP
+Streamable HTTP endpoint as a dashboard API. If `NOX_AUDIT_FILE` is absent or
+the file does not exist, the UI shows an explicit integration state instead of
+inventing events.
+
+Frontend checks:
+
+```powershell
+npm run typecheck --prefix frontend
+npm run lint --prefix frontend
+npm run build --prefix frontend
+```
+
 ## Reproducible security demonstrations
 
 Run these from separate PowerShell terminals when a process must stay running.
