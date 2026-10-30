@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Audit logs · Nox",
-  description: "Nox MCP Security Gateway audit explorer",
+  title: "Overview · Nox",
+  description: "Nox MCP Security Gateway security overview",
 };
 
 export default function RootLayout({
