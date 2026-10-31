@@ -32,6 +32,7 @@ import {
   loadTokenFile,
   type TokenFile,
 } from "./auth/index.js";
+import { startManagementServer, type RunningManagementServer } from "./management/index.js";
 
 const nox = new Server({
   name: "nox",
@@ -56,6 +57,7 @@ async function main() {
   let upstreamTransport: Transport | undefined;
   let downstreamTransport: StdioServerTransport | StreamableHTTPServerTransport | undefined;
   let httpServer: HttpServer | undefined;
+  let managementServer: RunningManagementServer | undefined;
   try {
     const upstreamConfiguration = loadUpstreamConfiguration();
     upstreamTransport = createUpstreamTransport(upstreamConfiguration);
@@ -256,6 +258,36 @@ async function main() {
     }
     await nox.connect(downstreamTransport);
 
+    const managementPortValue = process.env.NOX_MANAGEMENT_PORT;
+    if (managementPortValue !== undefined) {
+      const managementPort = Number(managementPortValue);
+      if (!Number.isInteger(managementPort) || managementPort < 1 || managementPort > 65535) {
+        throw new UpstreamConfigurationError("NOX_MANAGEMENT_PORT must be a valid TCP port");
+      }
+      const tokenPath = process.env.NOX_AUTH_TOKEN_FILE;
+      if (tokenPath === undefined || tokenPath.trim() === "") {
+        throw new UpstreamConfigurationError(
+          "NOX_AUTH_TOKEN_FILE is required when the management API is enabled",
+        );
+      }
+      managementServer = await startManagementServer({
+        host: process.env.NOX_MANAGEMENT_HOST ?? "127.0.0.1",
+        port: managementPort,
+        tokenPath,
+        policy: policyConfig,
+        status: {
+          state: "ready",
+          process: "nox",
+          upstream: "connected",
+          downstreamTransport: downstreamMode,
+          discoveredToolCount: discoveredTools.length,
+        },
+      });
+      console.error(
+        `[NOX] Management API listening on http://${managementServer.host}:${managementServer.port}`,
+      );
+    }
+
     console.error("[NOX] Gateway ready");
 
     if (downstreamMode === "stdio") {
@@ -278,6 +310,9 @@ async function main() {
     }
     process.exitCode = 1;
   } finally {
+    if (managementServer !== undefined) {
+      await closeResource("management API", managementServer.close);
+    }
     if (httpServer !== undefined) {
       await closeResource("HTTP listener", () =>
         new Promise<void>((resolve, reject) =>

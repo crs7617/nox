@@ -302,6 +302,27 @@ invalid, expired, and revoked credentials:
 npx vitest run src/remote-auth.integration.test.ts
 ```
 
+## Management API
+
+The optional management API is a separate HTTP listener from the MCP `/mcp`
+endpoint. It is read-only and requires a token from `NOX_AUTH_TOKEN_FILE` for
+every request. Enable it with a port; it binds to loopback by default:
+
+```powershell
+$env:NOX_AUTH_TOKEN_FILE = "$PWD\nox-tokens.json"
+$env:NOX_MANAGEMENT_PORT = "3001"
+npm run dev
+```
+
+Use the generated bearer token with `GET http://127.0.0.1:3001/health` or
+`GET http://127.0.0.1:3001/policy`. `NOX_MANAGEMENT_HOST` can override the
+listener address, but remote administration is not enabled by default and
+should only be used with an independently secured network boundary. The API
+does not provide policy mutation or command execution. Health reports only
+startup facts available to the current process: connected upstream, selected
+downstream transport, and discovered tool count; it does not claim to monitor
+future runtime failures.
+
 ## Verification commands
 
 These tests use local fixtures and do not contact a public service:
@@ -310,6 +331,7 @@ These tests use local fixtures and do not contact a public service:
 npx vitest run src/local-mcp.integration.test.ts
 npx vitest run src/http-mcp.integration.test.ts
 npx vitest run src/remote-auth.integration.test.ts
+npx vitest run src/management/index.test.ts
 npm run build
 npm test
 git diff --check

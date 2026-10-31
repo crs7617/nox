@@ -16,6 +16,24 @@ export type PolicyConfig = {
 
 export class PolicyConfigurationError extends Error {}
 
+export type SanitizedPolicyConfig = {
+  allow: string[];
+  deny: string[];
+  approval: string[];
+  approvalTimeoutMs: number;
+  upstreamTimeoutMs: number;
+};
+
+export function sanitizePolicyConfiguration(config: PolicyConfig): SanitizedPolicyConfig {
+  return {
+    allow: [...config.allow],
+    deny: [...config.deny],
+    approval: [...config.approval],
+    approvalTimeoutMs: config.approvalTimeoutMs,
+    upstreamTimeoutMs: config.upstreamTimeoutMs,
+  };
+}
+
 const emptyPolicy: PolicyConfig = {
   allow: [],
   deny: [],
