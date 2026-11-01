@@ -1,6 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { bearerToken, authenticateToken, loadTokenFile, type TokenFile } from "../auth/index.js";
-import { sanitizePolicyConfiguration, type PolicyConfig, type SanitizedPolicyConfig } from "../policy/index.js";
+import {
+  parsePolicyConfiguration,
+  persistPolicyConfiguration,
+  sanitizePolicyConfiguration,
+  validatePolicyToolNames,
+  type PolicyConfig,
+  type SanitizedPolicyConfig,
+} from "../policy/index.js";
 
 export type ManagementStatus = {
   state: "ready";
@@ -15,6 +22,10 @@ export type ManagementServerOptions = {
   port: number;
   tokenPath: string;
   policy: PolicyConfig;
+  policyPath?: string;
+  toolNames?: ReadonlySet<string>;
+  applyPolicy?: (policy: PolicyConfig) => void;
+  persistPolicy?: (path: string, policy: PolicyConfig) => Promise<void>;
   status: ManagementStatus;
   loadTokens?: (path: string) => Promise<TokenFile>;
 };
@@ -37,13 +48,23 @@ function sendJson(response: ServerResponse, status: number, body: JsonValue, hea
   response.end(JSON.stringify(body));
 }
 
-function safeError(response: ServerResponse, status: number, error: "bad_request" | "not_found" | "method_not_allowed"): void {
+function safeError(
+  response: ServerResponse,
+  status: number,
+  error: "bad_request" | "not_found" | "method_not_allowed" | "persistence_failed",
+): void {
   const messages = {
     bad_request: "Bad request",
     not_found: "Not found",
     method_not_allowed: "Method not allowed",
+    persistence_failed: "Unable to persist policy",
   };
-  sendJson(response, status, { error, message: messages[error] }, error === "method_not_allowed" ? { allow: "GET" } : {});
+  sendJson(
+    response,
+    status,
+    { error, message: messages[error] },
+    error === "method_not_allowed" ? { allow: "GET, PUT, POST" } : {},
+  );
 }
 
 function requestPath(request: IncomingMessage): string | undefined {
@@ -61,9 +82,27 @@ function requestPath(request: IncomingMessage): string | undefined {
   }
 }
 
+async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    length += buffer.length;
+    if (length > 1024 * 1024) {
+      throw new Error("request too large");
+    }
+    chunks.push(buffer);
+  }
+  if (length === 0) {
+    throw new Error("empty request");
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+}
+
 function createRequestHandler(options: ManagementServerOptions) {
   const loadTokens = options.loadTokens ?? loadTokenFile;
-  const policy: SanitizedPolicyConfig = sanitizePolicyConfiguration(options.policy);
+  let policy: SanitizedPolicyConfig = sanitizePolicyConfiguration(options.policy);
+  const persistPolicy = options.persistPolicy ?? persistPolicyConfiguration;
 
   return (request: IncomingMessage, response: ServerResponse): void => {
     void loadTokens(options.tokenPath)
@@ -77,19 +116,67 @@ function createRequestHandler(options: ManagementServerOptions) {
           safeError(response, 400, "bad_request");
           return;
         }
-        if (request.method !== "GET") {
-          safeError(response, 405, "method_not_allowed");
+        if (
+          (path === "/health" && request.method !== "GET") ||
+          (path === "/policy" && request.method !== "GET" && request.method !== "PUT") ||
+          (path === "/policy/validate" && request.method !== "POST") ||
+          (path !== "/health" && path !== "/policy" && path !== "/policy/validate")
+        ) {
+          if (path === "/health" || path === "/policy" || path === "/policy/validate") {
+            safeError(response, 405, "method_not_allowed");
+          } else {
+            safeError(response, 404, "not_found");
+          }
           return;
         }
-        if (path === "/health") {
+        if (request.method === "GET" && path === "/health") {
           sendJson(response, 200, options.status);
           return;
         }
-        if (path === "/policy") {
+        if (request.method === "GET" && path === "/policy") {
           sendJson(response, 200, policy);
           return;
         }
-        safeError(response, 404, "not_found");
+        if (path !== "/policy" && path !== "/policy/validate") {
+          safeError(response, 404, "not_found");
+          return;
+        }
+        void readJsonBody(request)
+          .then((body) => {
+            const proposed = parsePolicyConfiguration(body);
+            if (options.toolNames !== undefined) {
+              validatePolicyToolNames(proposed, options.toolNames);
+            }
+            const sanitized = sanitizePolicyConfiguration(proposed);
+            if (request.method === "POST") {
+              sendJson(response, 200, { valid: true, policy: sanitized });
+              return;
+            }
+            if (options.policyPath === undefined || options.applyPolicy === undefined) {
+              safeError(response, 503, "persistence_failed");
+              return;
+            }
+            return persistPolicy(options.policyPath, proposed)
+              .then(() => {
+                options.applyPolicy?.(proposed);
+                policy = sanitized;
+                sendJson(response, 200, policy);
+              })
+              .catch(() => {
+                if (!response.headersSent) {
+                  safeError(response, 503, "persistence_failed");
+                }
+              });
+          })
+          .catch((error) => {
+            if (!response.headersSent) {
+              sendJson(response, 400, {
+                error: "invalid_policy",
+                message: "Invalid policy",
+              });
+            }
+          });
+        return;
       })
       .catch(() => {
         if (!response.headersSent) {

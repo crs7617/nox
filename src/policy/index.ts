@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { chmod, open, rename, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 
 export type PolicyDecision = {
@@ -32,6 +33,17 @@ export function sanitizePolicyConfiguration(config: PolicyConfig): SanitizedPoli
     approvalTimeoutMs: config.approvalTimeoutMs,
     upstreamTimeoutMs: config.upstreamTimeoutMs,
   };
+}
+
+export function validatePolicyToolNames(
+  config: PolicyConfig,
+  toolNames: ReadonlySet<string>,
+): void {
+  const invalidTools = [...new Set([...config.allow, ...config.deny, ...config.approval])]
+    .filter((toolName) => !toolNames.has(toolName));
+  if (invalidTools.length > 0) {
+    throw new PolicyConfigurationError(`Unknown tool name(s): ${invalidTools.join(", ")}`);
+  }
 }
 
 const emptyPolicy: PolicyConfig = {
@@ -119,6 +131,30 @@ export function loadPolicyConfiguration(
         error instanceof Error ? error.message : String(error)
       }`,
     );
+  }
+}
+
+export async function persistPolicyConfiguration(
+  policyPath: string,
+  config: PolicyConfig,
+): Promise<void> {
+  const targetPath = resolve(policyPath);
+  const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  let descriptor: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    descriptor = await open(temporaryPath, "wx", 0o600);
+    await descriptor.writeFile(`${JSON.stringify(sanitizePolicyConfiguration(config), null, 2)}\n`, "utf8");
+    await descriptor.sync();
+    await descriptor.close();
+    descriptor = undefined;
+    await rename(temporaryPath, targetPath);
+    await chmod(targetPath, 0o600);
+  } catch (error) {
+    if (descriptor !== undefined) {
+      await descriptor.close().catch(() => undefined);
+    }
+    await unlink(temporaryPath).catch(() => undefined);
+    throw error;
   }
 }
 
