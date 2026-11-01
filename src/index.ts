@@ -62,12 +62,12 @@ async function main() {
     const upstreamConfiguration = loadUpstreamConfiguration();
     upstreamTransport = createUpstreamTransport(upstreamConfiguration);
     const policyConfig = loadPolicyConfiguration();
-    const policy = createPolicyEngine(policyConfig, parseEnvironmentDeniedTools());
+    let policy = createPolicyEngine(policyConfig, parseEnvironmentDeniedTools());
     const approval = new ApprovalManager(
       new Set(policyConfig.approval),
       policyConfig.approvalTimeoutMs,
     );
-    const upstreamTimeoutMs = policyConfig.upstreamTimeoutMs;
+    let upstreamTimeoutMs = policyConfig.upstreamTimeoutMs;
     const audit = new AuditLogger();
 
     // Nox acts as an MCP client to the upstream server.
@@ -275,6 +275,13 @@ async function main() {
         port: managementPort,
         tokenPath,
         policy: policyConfig,
+        policyPath: process.env.NOX_POLICY_FILE ?? "nox-policy.json",
+        toolNames: new Set(tools.keys()),
+        applyPolicy: (updatedPolicy) => {
+          policy = createPolicyEngine(updatedPolicy, parseEnvironmentDeniedTools());
+          approval.update(updatedPolicy);
+          upstreamTimeoutMs = updatedPolicy.upstreamTimeoutMs;
+        },
         status: {
           state: "ready",
           process: "nox",

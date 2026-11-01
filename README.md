@@ -305,8 +305,8 @@ npx vitest run src/remote-auth.integration.test.ts
 ## Management API
 
 The optional management API is a separate HTTP listener from the MCP `/mcp`
-endpoint. It is read-only and requires a token from `NOX_AUTH_TOKEN_FILE` for
-every request. Enable it with a port; it binds to loopback by default:
+endpoint. It requires a token from `NOX_AUTH_TOKEN_FILE` for every request.
+Enable it with a port; it binds to loopback by default:
 
 ```powershell
 $env:NOX_AUTH_TOKEN_FILE = "$PWD\nox-tokens.json"
@@ -315,10 +315,25 @@ npm run dev
 ```
 
 Use the generated bearer token with `GET http://127.0.0.1:3001/health` or
-`GET http://127.0.0.1:3001/policy`. `NOX_MANAGEMENT_HOST` can override the
+`GET http://127.0.0.1:3001/policy`. Validate a proposed complete policy without
+saving it with:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3001/policy/validate `
+  -Headers @{Authorization = "Bearer $token"} -ContentType "application/json" `
+  -Body '{"allow":["safe-tool"],"deny":[],"approval":[],"approvalTimeoutMs":1000,"upstreamTimeoutMs":2000}'
+```
+
+Update and persist the complete policy with `PUT /policy` using the same JSON
+shape. A successful update atomically replaces `NOX_POLICY_FILE` and applies
+the new allow, deny, approval, and timeout settings to the running gateway.
+Malformed JSON, unsupported fields, unknown discovered tool names, and invalid
+structures are rejected without changing the existing policy.
+
+`NOX_MANAGEMENT_HOST` can override the
 listener address, but remote administration is not enabled by default and
 should only be used with an independently secured network boundary. The API
-does not provide policy mutation or command execution. Health reports only
+does not provide command execution. Health reports only
 startup facts available to the current process: connected upstream, selected
 downstream transport, and discovered tool count; it does not claim to monitor
 future runtime failures.

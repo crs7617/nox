@@ -1,30 +1,44 @@
 import { createToken } from "../auth/index.js";
 import { request } from "node:http";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { startManagementServer } from "./index.js";
 
-async function get(url: string, token?: string, method = "GET"): Promise<{ status: number; body: Record<string, unknown> }> {
+async function requestJson(
+  url: string,
+  token?: string,
+  method = "GET",
+  body?: unknown,
+): Promise<{ status: number; body: Record<string, unknown> }> {
   return await new Promise((resolve, reject) => {
     const parsed = new URL(url);
+    const payload = body === undefined ? undefined : JSON.stringify(body);
     const response = request(
       {
         hostname: parsed.hostname,
         port: parsed.port,
         path: `${parsed.pathname}${parsed.search}`,
         method,
-        headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+        headers: {
+          ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+          ...(payload === undefined
+            ? {}
+            : { "content-type": "application/json", "content-length": Buffer.byteLength(payload) }),
+        },
       },
       (incoming) => {
-        let body = "";
+        let responseBody = "";
         incoming.setEncoding("utf8");
-        incoming.on("data", (chunk) => (body += chunk));
+        incoming.on("data", (chunk) => (responseBody += chunk));
         incoming.on("end", () =>
-          resolve({ status: incoming.statusCode ?? 0, body: JSON.parse(body) as Record<string, unknown> }),
+          resolve({
+            status: incoming.statusCode ?? 0,
+            body: JSON.parse(responseBody) as Record<string, unknown>,
+          }),
         );
       },
     );
     response.on("error", reject);
-    response.end();
+    response.end(payload);
   });
 }
 
@@ -53,11 +67,9 @@ describe("management API", () => {
   it("requires authentication and authorizes the read-only endpoints", async () => {
     const server = await startManagementServer(options);
     try {
-      const unauthenticated = await get(`http://127.0.0.1:${server.port}/health`);
-      expect(unauthenticated.status).toBe(401);
-      const wrongToken = await get(`http://127.0.0.1:${server.port}/health`, "wrong");
-      expect(wrongToken.status).toBe(401);
-      const health = await get(`http://127.0.0.1:${server.port}/health`, token.plaintext);
+      expect((await requestJson(`http://127.0.0.1:${server.port}/health`)).status).toBe(401);
+      expect((await requestJson(`http://127.0.0.1:${server.port}/health`, "wrong")).status).toBe(401);
+      const health = await requestJson(`http://127.0.0.1:${server.port}/health`, token.plaintext);
       expect(health.status).toBe(200);
       expect(health.body).toMatchObject({ state: "ready", discoveredToolCount: 1 });
     } finally {
@@ -68,7 +80,7 @@ describe("management API", () => {
   it("returns only sanitized policy data", async () => {
     const server = await startManagementServer(options);
     try {
-      const response = await get(`http://127.0.0.1:${server.port}/policy`, token.plaintext);
+      const response = await requestJson(`http://127.0.0.1:${server.port}/policy`, token.plaintext);
       expect(response.status).toBe(200);
       expect(response.body).toEqual(options.policy);
       expect(JSON.stringify(response.body)).not.toContain("hash");
@@ -78,15 +90,101 @@ describe("management API", () => {
     }
   });
 
+  it("validates and updates a complete policy", async () => {
+    const applied = vi.fn();
+    const persist = vi.fn(async () => undefined);
+    const server = await startManagementServer({
+      ...options,
+      policyPath: "nox-policy.json",
+      toolNames: new Set(["safe-tool", "sensitive-tool"]),
+      applyPolicy: applied,
+      persistPolicy: persist,
+    });
+    const proposed = {
+      allow: ["safe-tool"],
+      deny: [],
+      approval: ["sensitive-tool"],
+      approvalTimeoutMs: 500,
+      upstreamTimeoutMs: 750,
+    };
+    try {
+      const validation = await requestJson(
+        `http://127.0.0.1:${server.port}/policy/validate`,
+        token.plaintext,
+        "POST",
+        proposed,
+      );
+      expect(validation.status).toBe(200);
+      expect(validation.body).toEqual({ valid: true, policy: proposed });
+
+      const update = await requestJson(
+        `http://127.0.0.1:${server.port}/policy`,
+        token.plaintext,
+        "PUT",
+        proposed,
+      );
+      expect(update.status).toBe(200);
+      expect(update.body).toEqual(proposed);
+      expect(persist).toHaveBeenCalledWith("nox-policy.json", proposed);
+      expect(applied).toHaveBeenCalledWith(proposed);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("rejects malformed, unsupported, and unavailable requests safely", async () => {
     const server = await startManagementServer(options);
     try {
-      const malformed = await get(`http://127.0.0.1:${server.port}/health?unexpected=1`, token.plaintext);
+      expect(
+        (await requestJson(`http://127.0.0.1:${server.port}/health?unexpected=1`, token.plaintext)).status,
+      ).toBe(400);
+      expect(
+        (await requestJson(`http://127.0.0.1:${server.port}/health`, token.plaintext, "POST")).status,
+      ).toBe(405);
+      expect((await requestJson(`http://127.0.0.1:${server.port}/missing`, token.plaintext)).status).toBe(404);
+      const malformed = await requestJson(
+        `http://127.0.0.1:${server.port}/policy/validate`,
+        token.plaintext,
+        "POST",
+        "not-json",
+      );
       expect(malformed.status).toBe(400);
-      const unsupported = await get(`http://127.0.0.1:${server.port}/health`, token.plaintext, "POST");
-      expect(unsupported.status).toBe(405);
-      const unavailable = await get(`http://127.0.0.1:${server.port}/missing`, token.plaintext);
-      expect(unavailable.status).toBe(404);
+      const unsupported = await requestJson(
+        `http://127.0.0.1:${server.port}/policy/validate`,
+        token.plaintext,
+        "POST",
+        { unsupported: true },
+      );
+      expect(unsupported.status).toBe(400);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("leaves the live policy unchanged when persistence fails", async () => {
+    const applied = vi.fn();
+    const persist = vi.fn(async () => {
+      throw new Error("disk unavailable");
+    });
+    const server = await startManagementServer({
+      ...options,
+      policyPath: "nox-policy.json",
+      toolNames: new Set(["safe-tool"]),
+      applyPolicy: applied,
+      persistPolicy: persist,
+    });
+    try {
+      const failed = await requestJson(
+        `http://127.0.0.1:${server.port}/policy`,
+        token.plaintext,
+        "PUT",
+        { allow: ["safe-tool"] },
+      );
+      expect(failed.status).toBe(503);
+      expect(applied).not.toHaveBeenCalled();
+      expect((await requestJson(`http://127.0.0.1:${server.port}/policy`, token.plaintext)).body).toEqual(
+        options.policy,
+      );
     } finally {
       await server.close();
     }
@@ -100,7 +198,7 @@ describe("management API", () => {
       },
     });
     try {
-      const response = await get(`http://127.0.0.1:${server.port}/health`, token.plaintext);
+      const response = await requestJson(`http://127.0.0.1:${server.port}/policy/validate`, token.plaintext, "POST", {});
       expect(response.status).toBe(503);
       expect(response.body).toEqual({ error: "Authentication unavailable" });
     } finally {

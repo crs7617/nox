@@ -45,12 +45,17 @@ export class ApprovalManager {
   private pending: Promise<void> = Promise.resolve();
 
   public constructor(
-    private readonly sensitiveTools: ReadonlySet<string>,
-    private readonly timeoutMs: number,
+    private sensitiveTools: ReadonlySet<string>,
+    private timeoutMs: number,
     private readonly getReader: () => ApprovalReader | undefined = terminalReader,
     private readonly writePrompt: (message: string) => void = (message) =>
       process.stderr.write(message),
   ) {}
+
+  public update(config: { approval: readonly string[]; approvalTimeoutMs: number }): void {
+    this.sensitiveTools = new Set(config.approval);
+    this.timeoutMs = config.approvalTimeoutMs;
+  }
 
   public required(toolName: string): boolean {
     return this.sensitiveTools.has(toolName);
