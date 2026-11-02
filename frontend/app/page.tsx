@@ -8,7 +8,6 @@ import {
   ChevronDown,
   CircleHelp,
   CircleUserRound,
-  FileCheck2,
   FileClock,
   Gauge,
   KeyRound,
@@ -25,12 +24,11 @@ import type { AuditEvent, AuditResult } from "@/lib/audit";
 import { calculateMetrics, decisionBreakdown, filterEventsByRange, type DashboardRange } from "@/lib/dashboard";
 
 const navigation = [
-  { label: "Overview", icon: Gauge, active: true },
-  { label: "Tools", icon: TerminalSquare },
-  { label: "Policies", icon: FileCheck2 },
-  { label: "Approvals", icon: KeyRound },
-  { label: "Audit logs", icon: FileClock },
-  { label: "Upstreams", icon: Network },
+  { label: "Overview", icon: Gauge, href: "/" },
+  { label: "Tools & policies", icon: TerminalSquare, href: "/tools-policies" },
+  { label: "Approvals", icon: KeyRound, href: "#" },
+  { label: "Audit logs", icon: FileClock, href: "#" },
+  { label: "Upstreams", icon: Network, href: "#" },
 ];
 
 function formatTime(timestamp: string) {
@@ -58,7 +56,7 @@ function Sidebar({ onClose }: { onClose: () => void }) {
   return <aside className="sidebar">
     <div className="sidebar-top"><div className="brand"><span className="brand-mark"><ShieldCheck size={15} strokeWidth={2.5} /></span><span>Nox</span><ChevronDown size={13} className="muted-icon" /></div><button className="icon-button mobile-close" onClick={onClose} aria-label="Close navigation"><X size={16} /></button></div>
     <div className="workspace-switcher"><span className="workspace-avatar">N</span><span className="workspace-name">Local workspace</span><ChevronDown size={13} className="muted-icon" /></div>
-    <nav aria-label="Primary navigation" className="nav-section"><span className="nav-label">Workspace</span>{navigation.map(({ label, icon: Icon, active }) => <button key={label} className={`nav-item ${active ? "nav-active" : ""}`}><Icon size={15} strokeWidth={1.8} /><span>{label}</span>{active && <span className="nav-indicator" />}</button>)}</nav>
+    <nav aria-label="Primary navigation" className="nav-section"><span className="nav-label">Workspace</span>{navigation.map(({ label, icon: Icon, href }) => <a key={label} href={href} className={`nav-item ${label === "Overview" ? "nav-active" : ""}`}><Icon size={15} strokeWidth={1.8} /><span>{label}</span>{label === "Overview" && <span className="nav-indicator" />}</a>)}</nav>
     <div className="sidebar-bottom"><button className="nav-item"><CircleHelp size={15} /><span>Help & docs</span></button><button className="user-row"><span className="user-avatar">OP</span><span className="user-copy"><strong>Operator</strong><small>Local admin</small></span><ChevronDown size={13} className="muted-icon" /></button></div>
   </aside>;
 }

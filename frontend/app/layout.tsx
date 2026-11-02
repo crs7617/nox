@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Overview · Nox",
+  title: "Nox · MCP Security Gateway",
   description: "Nox MCP Security Gateway security overview",
 };
 
