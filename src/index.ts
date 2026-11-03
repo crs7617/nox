@@ -277,6 +277,7 @@ async function main() {
         policy: policyConfig,
         policyPath: process.env.NOX_POLICY_FILE ?? "nox-policy.json",
         toolNames: new Set(tools.keys()),
+        discoveredTools,
         applyPolicy: (updatedPolicy) => {
           policy = createPolicyEngine(updatedPolicy, parseEnvironmentDeniedTools());
           approval.update(updatedPolicy);

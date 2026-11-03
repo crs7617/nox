@@ -77,6 +77,66 @@ describe("management API", () => {
     }
   });
 
+  it("returns the startup-discovered tool inventory without internal metadata", async () => {
+    const server = await startManagementServer({
+      ...options,
+      discoveredTools: [
+        {
+          name: "safe-tool",
+          description: "An upstream description.",
+          inputSchema: { type: "object", properties: { value: { type: "string" } } },
+          outputSchema: { type: "object" },
+          annotations: { destructiveHint: true },
+          _meta: { token: "must not be exposed" },
+        },
+      ],
+    });
+    try {
+      expect((await requestJson(`http://127.0.0.1:${server.port}/tools`)).status).toBe(401);
+      const response = await requestJson(`http://127.0.0.1:${server.port}/tools`, token.plaintext);
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        count: 1,
+        tools: [
+          {
+            name: "safe-tool",
+            description: "An upstream description.",
+            inputSchema: { type: "object", properties: { value: { type: "string" } } },
+          },
+        ],
+      });
+      expect(JSON.stringify(response.body)).not.toContain("token");
+      expect(JSON.stringify(response.body)).not.toContain("destructiveHint");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns an empty inventory accurately", async () => {
+    const server = await startManagementServer({ ...options, discoveredTools: [] });
+    try {
+      const response = await requestJson(`http://127.0.0.1:${server.port}/tools`, token.plaintext);
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ count: 0, tools: [] });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("reports an unavailable inventory without leaking upstream details", async () => {
+    const server = await startManagementServer({ ...options });
+    try {
+      const response = await requestJson(`http://127.0.0.1:${server.port}/tools`, token.plaintext);
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({
+        error: "upstream_unavailable",
+        message: "Tool inventory unavailable",
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it("returns only sanitized policy data", async () => {
     const server = await startManagementServer(options);
     try {
