@@ -3,8 +3,8 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 export async function discoverTools(client: Pick<Client, "listTools">): Promise<Tool[]> {
   const response = await client.listTools();
-  if (!Array.isArray(response.tools) || response.tools.length === 0) {
-    throw new Error("Upstream advertised no tools");
+  if (!Array.isArray(response.tools)) {
+    throw new Error("Upstream returned an invalid tool list");
   }
 
   const names = new Set<string>();

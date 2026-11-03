@@ -15,10 +15,8 @@ describe("tool discovery", () => {
     expect(tools.map((tool) => tool.name)).toEqual(["one", "two"]);
   });
 
-  it("fails on an unavailable or invalid tool list", async () => {
-    await expect(
-      discoverTools({ listTools: async () => ({ tools: [] }) }),
-    ).rejects.toThrow("no tools");
+  it("supports an empty inventory and fails on an invalid tool list", async () => {
+    await expect(discoverTools({ listTools: async () => ({ tools: [] }) })).resolves.toEqual([]);
     await expect(
       discoverTools({
         listTools: async () => ({

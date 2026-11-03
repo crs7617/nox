@@ -314,8 +314,40 @@ $env:NOX_MANAGEMENT_PORT = "3001"
 npm run dev
 ```
 
-Use the generated bearer token with `GET http://127.0.0.1:3001/health` or
-`GET http://127.0.0.1:3001/policy`. Validate a proposed complete policy without
+Use the generated bearer token with `GET http://127.0.0.1:3001/health`,
+`GET http://127.0.0.1:3001/tools`, or
+`GET http://127.0.0.1:3001/policy`. The tools endpoint returns the
+startup-discovered upstream inventory:
+
+```json
+{
+  "count": 1,
+  "tools": [
+    {
+      "name": "safe-tool",
+      "description": "A tool description supplied by the upstream server.",
+      "inputSchema": { "type": "object", "properties": {} }
+    }
+  ]
+}
+```
+
+`count` is the length of `tools`; an upstream that advertises no tools returns
+`{"count":0,"tools":[]}`. If the inventory is unavailable, the endpoint
+returns HTTP 503 with `{"error":"upstream_unavailable","message":"Tool
+inventory unavailable"}`. Only `name`, `description` when present, and
+`inputSchema` are exposed; SDK metadata such as `_meta`, annotations, output
+schemas, and execution details are omitted. Descriptions are untrusted
+upstream text and clients must render them safely.
+
+Discovery runs once during gateway startup. `/tools` reports that cached
+startup snapshot and does not refresh or make an upstream request per
+management API call. If startup discovery or the upstream connection fails,
+Nox exits without starting the management listener, so there is no live
+unavailable endpoint in that process; the 503 response documents the
+management server's explicit unavailable state for callers and tests.
+
+Validate a proposed complete policy without
 saving it with:
 
 ```powershell

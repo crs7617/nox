@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { bearerToken, authenticateToken, loadTokenFile, type TokenFile } from "../auth/index.js";
 import {
   parsePolicyConfiguration,
@@ -27,6 +28,7 @@ export type ManagementServerOptions = {
   applyPolicy?: (policy: PolicyConfig) => void;
   persistPolicy?: (path: string, policy: PolicyConfig) => Promise<void>;
   status: ManagementStatus;
+  discoveredTools?: readonly Tool[];
   loadTokens?: (path: string) => Promise<TokenFile>;
 };
 
@@ -51,13 +53,19 @@ function sendJson(response: ServerResponse, status: number, body: JsonValue, hea
 function safeError(
   response: ServerResponse,
   status: number,
-  error: "bad_request" | "not_found" | "method_not_allowed" | "persistence_failed",
+  error:
+    | "bad_request"
+    | "not_found"
+    | "method_not_allowed"
+    | "persistence_failed"
+    | "upstream_unavailable",
 ): void {
   const messages = {
     bad_request: "Bad request",
     not_found: "Not found",
     method_not_allowed: "Method not allowed",
     persistence_failed: "Unable to persist policy",
+    upstream_unavailable: "Tool inventory unavailable",
   };
   sendJson(
     response,
@@ -65,6 +73,14 @@ function safeError(
     { error, message: messages[error] },
     error === "method_not_allowed" ? { allow: "GET, PUT, POST" } : {},
   );
+}
+
+function sanitizeTool(tool: Tool): Record<string, unknown> {
+  return {
+    name: tool.name,
+    ...(tool.description === undefined ? {} : { description: tool.description }),
+    inputSchema: tool.inputSchema,
+  };
 }
 
 function requestPath(request: IncomingMessage): string | undefined {
@@ -118,11 +134,12 @@ function createRequestHandler(options: ManagementServerOptions) {
         }
         if (
           (path === "/health" && request.method !== "GET") ||
+          (path === "/tools" && request.method !== "GET") ||
           (path === "/policy" && request.method !== "GET" && request.method !== "PUT") ||
           (path === "/policy/validate" && request.method !== "POST") ||
-          (path !== "/health" && path !== "/policy" && path !== "/policy/validate")
+          (path !== "/health" && path !== "/tools" && path !== "/policy" && path !== "/policy/validate")
         ) {
-          if (path === "/health" || path === "/policy" || path === "/policy/validate") {
+          if (path === "/health" || path === "/tools" || path === "/policy" || path === "/policy/validate") {
             safeError(response, 405, "method_not_allowed");
           } else {
             safeError(response, 404, "not_found");
@@ -131,6 +148,15 @@ function createRequestHandler(options: ManagementServerOptions) {
         }
         if (request.method === "GET" && path === "/health") {
           sendJson(response, 200, options.status);
+          return;
+        }
+        if (request.method === "GET" && path === "/tools") {
+          if (options.discoveredTools === undefined) {
+            safeError(response, 503, "upstream_unavailable");
+            return;
+          }
+          const tools = options.discoveredTools.map(sanitizeTool);
+          sendJson(response, 200, { count: tools.length, tools });
           return;
         }
         if (request.method === "GET" && path === "/policy") {
