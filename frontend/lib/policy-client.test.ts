@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getPolicy, savePolicy, validatePolicy } from "./policy-client";
+import { getDiscoveredTools, getPolicy, savePolicy, validatePolicy } from "./policy-client";
 import { emptyPolicy } from "./policy";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -34,5 +34,27 @@ describe("policy management client", () => {
       approval: [],
     }))));
     await expect(getPolicy()).rejects.toThrow("invalid policy timeouts");
+  });
+
+  it("loads the discovered tool inventory without returning schema content", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      count: 1,
+      tools: [{
+        name: "search",
+        description: "Find records",
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      }],
+    }))));
+    await expect(getDiscoveredTools()).resolves.toEqual({
+      count: 1,
+      tools: [{ name: "search", description: "Find records", hasInputSchema: true }],
+    });
+  });
+
+  it("surfaces an unavailable upstream inventory", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: "Tool inventory unavailable" }), { status: 503 }),
+    ));
+    await expect(getDiscoveredTools()).rejects.toThrow("Tool inventory unavailable");
   });
 });

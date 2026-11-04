@@ -13,7 +13,7 @@ function managementUrl(path: string[]): string | undefined {
 async function proxy(request: Request, context: RouteContext): Promise<NextResponse> {
   const path = (await context.params).path;
   const requestedPath = `/${path.join("/")}`;
-  if (!["/health", "/policy", "/policy/validate"].includes(requestedPath)) {
+  if (!["/health", "/tools", "/policy", "/policy/validate"].includes(requestedPath)) {
     return NextResponse.json(
       { error: "not_found", message: "Not found" },
       { status: 404, headers: { "cache-control": "no-store" } },

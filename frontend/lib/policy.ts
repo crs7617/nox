@@ -17,8 +17,15 @@ export type PolicySource =
 export type PolicyTool = {
   name: string;
   description?: string;
+  hasInputSchema?: boolean;
   state: PolicyState;
   source: PolicySource;
+};
+
+export type DiscoveredTool = {
+  name: string;
+  description?: string;
+  hasInputSchema: boolean;
 };
 
 export const emptyPolicy: PolicyConfig = {
@@ -55,21 +62,29 @@ export function normalizePolicy(value: unknown): PolicyConfig {
   };
 }
 
-export function mapPolicyTools(policy: PolicyConfig): PolicyTool[] {
-  const names = new Set([...policy.allow, ...policy.deny, ...policy.approval]);
+export function mapPolicyTools(
+  policy: PolicyConfig,
+  discoveredTools?: readonly DiscoveredTool[],
+): PolicyTool[] {
+  const tools = new Map((discoveredTools ?? []).map((tool) => [tool.name, tool]));
+  const names =
+    discoveredTools === undefined
+      ? new Set([...policy.allow, ...policy.deny, ...policy.approval])
+      : new Set(discoveredTools.map((tool) => tool.name));
   return [...names].sort((a, b) => a.localeCompare(b)).map((name) => {
+    const discovered = tools.get(name);
     if (policy.deny.includes(name)) {
-      return { name, state: "denied", source: "explicit-deny" };
+      return { name, ...discovered, state: "denied", source: "explicit-deny" };
     }
     if (policy.approval.includes(name)) {
-      return { name, state: "approval", source: "explicit-approval" };
+      return { name, ...discovered, state: "approval", source: "explicit-approval" };
     }
     if (policy.allow.includes(name)) {
-      return { name, state: "allowed", source: "explicit-allow" };
+      return { name, ...discovered, state: "allowed", source: "explicit-allow" };
     }
     return policy.allow.length > 0
-      ? { name, state: "denied", source: "default-deny" }
-      : { name, state: "allowed", source: "default-allow" };
+      ? { name, ...discovered, state: "denied", source: "default-deny" }
+      : { name, ...discovered, state: "allowed", source: "default-allow" };
   });
 }
 
@@ -83,11 +98,17 @@ export function policyForTools(
     deny: [] as string[],
     approval: [] as string[],
   };
+  const discoveredNames = new Set(tools.map((tool) => tool.name));
   for (const tool of tools) {
     const state = changes[tool.name] ?? tool.state;
     next[state === "allowed" ? "allow" : state === "denied" ? "deny" : "approval"].push(tool.name);
   }
-  return { ...base, ...next };
+  return {
+    ...base,
+    allow: [...base.allow.filter((name) => !discoveredNames.has(name)), ...next.allow],
+    deny: [...base.deny.filter((name) => !discoveredNames.has(name)), ...next.deny],
+    approval: [...base.approval.filter((name) => !discoveredNames.has(name)), ...next.approval],
+  };
 }
 
 export function policyDescription(source: PolicySource): string {
