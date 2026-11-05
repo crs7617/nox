@@ -2,6 +2,7 @@ import { createToken } from "../auth/index.js";
 import { request } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { startManagementServer } from "./index.js";
+import { ApprovalManager } from "../approval/index.js";
 
 async function requestJson(
   url: string,
@@ -261,6 +262,58 @@ describe("management API", () => {
       const response = await requestJson(`http://127.0.0.1:${server.port}/policy/validate`, token.plaintext, "POST", {});
       expect(response.status).toBe(503);
       expect(response.body).toEqual({ error: "Authentication unavailable" });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("lists and resolves pending approvals without exposing arguments", async () => {
+    const approval = new ApprovalManager(
+      new Set(["sensitive"]),
+      1000,
+      () => undefined,
+      vi.fn(),
+      { managementEnabled: true },
+    );
+    const waiting = approval.request("sensitive");
+    await vi.waitFor(() => expect(approval.list()).toHaveLength(1));
+    const server = await startManagementServer({ ...options, approval });
+    try {
+      const listed = await requestJson(`http://127.0.0.1:${server.port}/approvals`, token.plaintext);
+      expect(listed.status).toBe(200);
+      expect(listed.body.approvals).toMatchObject([{ toolName: "sensitive", status: "pending" }]);
+      expect(JSON.stringify(listed.body)).not.toContain("arguments");
+      const id = (listed.body.approvals as Array<{ id: string }>)[0]?.id;
+      const resolved = await requestJson(`http://127.0.0.1:${server.port}/approvals/${id}/approve`, token.plaintext, "POST");
+      expect(resolved.status).toBe(200);
+      expect(await waiting).toBe("approved");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("persists upstream changes as restart-required and never returns secrets", async () => {
+    const persist = vi.fn(async () => undefined);
+    const server = await startManagementServer({
+      ...options,
+      upstream: { transport: "http", url: "https://example.test/mcp" },
+      upstreamPath: "nox-upstream.json",
+      persistUpstream: persist,
+    });
+    try {
+      const response = await requestJson(
+        `http://127.0.0.1:${server.port}/upstreams`,
+        token.plaintext,
+        "POST",
+        { transport: "http", url: "https://example.test/new" },
+      );
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ restartRequired: true, transport: "http" });
+      expect(persist).toHaveBeenCalledWith("nox-upstream.json", {
+        transport: "http",
+        url: "https://example.test/new",
+      });
+      expect(JSON.stringify(response.body)).not.toContain("token");
     } finally {
       await server.close();
     }

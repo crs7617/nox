@@ -9,6 +9,13 @@ import {
   type PolicyConfig,
   type SanitizedPolicyConfig,
 } from "../policy/index.js";
+import {
+  loadUpstreamConfiguration,
+  parseUpstreamConfiguration,
+  persistUpstreamConfiguration,
+  type UpstreamConfiguration,
+} from "../upstream/index.js";
+import type { ApprovalManager, PendingApproval } from "../approval/index.js";
 
 export type ManagementStatus = {
   state: "ready";
@@ -30,6 +37,11 @@ export type ManagementServerOptions = {
   status: ManagementStatus;
   discoveredTools?: readonly Tool[];
   loadTokens?: (path: string) => Promise<TokenFile>;
+  approval?: ApprovalManager;
+  upstream?: UpstreamConfiguration;
+  upstreamPath?: string;
+  persistUpstream?: (path: string, configuration: UpstreamConfiguration) => Promise<void>;
+  testUpstream?: (configuration: UpstreamConfiguration) => Promise<{ connected: boolean; toolCount: number }>;
 };
 
 export type RunningManagementServer = {
@@ -58,7 +70,9 @@ function safeError(
     | "not_found"
     | "method_not_allowed"
     | "persistence_failed"
-    | "upstream_unavailable",
+    | "upstream_unavailable"
+    | "approval_unavailable"
+    | "upstream_persistence_failed",
 ): void {
   const messages = {
     bad_request: "Bad request",
@@ -66,6 +80,8 @@ function safeError(
     method_not_allowed: "Method not allowed",
     persistence_failed: "Unable to persist policy",
     upstream_unavailable: "Tool inventory unavailable",
+    approval_unavailable: "Approval service unavailable",
+    upstream_persistence_failed: "Unable to persist upstream configuration",
   };
   sendJson(
     response,
@@ -73,6 +89,16 @@ function safeError(
     { error, message: messages[error] },
     error === "method_not_allowed" ? { allow: "GET, PUT, POST" } : {},
   );
+}
+
+function safeUpstream(configuration: UpstreamConfiguration): Record<string, unknown> {
+  return configuration.transport === "stdio"
+    ? { transport: "stdio", command: configuration.command, args: configuration.args }
+    : { transport: "http", url: configuration.url };
+}
+
+function safeApproval(approval: PendingApproval): PendingApproval {
+  return { ...approval };
 }
 
 function sanitizeTool(tool: Tool): Record<string, unknown> {
@@ -119,6 +145,9 @@ function createRequestHandler(options: ManagementServerOptions) {
   const loadTokens = options.loadTokens ?? loadTokenFile;
   let policy: SanitizedPolicyConfig = sanitizePolicyConfiguration(options.policy);
   const persistPolicy = options.persistPolicy ?? persistPolicyConfiguration;
+  let upstream = options.upstream;
+  let upstreamRuntimeStatus: string = options.status.upstream;
+  const persistUpstream = options.persistUpstream ?? persistUpstreamConfiguration;
 
   return (request: IncomingMessage, response: ServerResponse): void => {
     void loadTokens(options.tokenPath)
@@ -132,14 +161,32 @@ function createRequestHandler(options: ManagementServerOptions) {
           safeError(response, 400, "bad_request");
           return;
         }
+        const approvalPath = path?.match(/^\/approvals(?:\/([^/]+)(?:\/(approve|reject))?)?$/u);
+        const upstreamPath = path?.match(/^\/upstreams(?:\/([^/]+))?$/u);
+        const allowed = [
+          "/health", "/tools", "/policy", "/policy/validate", "/approvals",
+          "/upstreams", "/upstreams/test",
+        ];
+        if (
+          !allowed.includes(path ?? "") &&
+          approvalPath === null &&
+          upstreamPath === null
+        ) {
+          safeError(response, 404, "not_found");
+          return;
+        }
         if (
           (path === "/health" && request.method !== "GET") ||
           (path === "/tools" && request.method !== "GET") ||
           (path === "/policy" && request.method !== "GET" && request.method !== "PUT") ||
           (path === "/policy/validate" && request.method !== "POST") ||
-          (path !== "/health" && path !== "/tools" && path !== "/policy" && path !== "/policy/validate")
+          (path === "/approvals" && request.method !== "GET") ||
+          (approvalPath !== null && approvalPath[1] !== undefined && request.method !== "GET" && request.method !== "POST") ||
+          (path === "/upstreams" && request.method !== "GET" && request.method !== "POST") ||
+          (upstreamPath !== null && upstreamPath[1] !== undefined && request.method !== "GET" && request.method !== "PUT" && request.method !== "DELETE") ||
+          (path === "/upstreams/test" && request.method !== "POST")
         ) {
-          if (path === "/health" || path === "/tools" || path === "/policy" || path === "/policy/validate") {
+          if (allowed.includes(path ?? "") || approvalPath !== null || upstreamPath !== null) {
             safeError(response, 405, "method_not_allowed");
           } else {
             safeError(response, 404, "not_found");
@@ -155,7 +202,117 @@ function createRequestHandler(options: ManagementServerOptions) {
             safeError(response, 503, "upstream_unavailable");
             return;
           }
-          const tools = options.discoveredTools.map(sanitizeTool);
+        }
+          if (request.method === "GET" && path === "/approvals") {
+            if (options.approval === undefined) {
+              safeError(response, 503, "approval_unavailable");
+              return;
+            }
+            const approvals = options.approval.list().map(safeApproval);
+            sendJson(response, 200, { count: approvals.length, approvals });
+            return;
+          }
+          if (approvalPath !== null && approvalPath[1] !== undefined && request.method === "GET") {
+            const approval = options.approval?.get(approvalPath[1]);
+            if (approval === undefined) {
+              safeError(response, 404, "not_found");
+              return;
+            }
+            sendJson(response, 200, { approval: safeApproval(approval) });
+            return;
+          }
+          if (approvalPath !== null && approvalPath[1] !== undefined && request.method === "POST") {
+            const decision = approvalPath[2] === "reject" ? "rejected" : approvalPath[2] === "approve" ? "approved" : undefined;
+            if (options.approval === undefined) {
+              safeError(response, 503, "approval_unavailable");
+              return;
+            }
+            if (decision === undefined) {
+              safeError(response, 405, "method_not_allowed");
+              return;
+            }
+            const id = approvalPath[1];
+            const resolved = options.approval.resolve(id, decision as "approved" | "rejected");
+            if (!resolved) {
+              const current = options.approval.get(id);
+              sendJson(response, current?.status === "expired" ? 409 : 404, {
+                error: current?.status === "expired" ? "expired" : "not_found",
+                message: current?.status === "expired" ? "Approval request expired" : "Approval request unavailable",
+              });
+              return;
+            }
+            sendJson(response, 200, { approval: options.approval.get(id) ?? { id, status: decision } });
+            return;
+          }
+          if (request.method === "GET" && path === "/upstreams") {
+            if (upstream === undefined) {
+              try {
+                upstream = loadUpstreamConfiguration(options.upstreamPath);
+              } catch {
+                safeError(response, 503, "upstream_unavailable");
+                return;
+              }
+            }
+            sendJson(response, 200, {
+              restartRequired: true,
+              upstreams: [{ id: "default", status: upstreamRuntimeStatus, toolCount: options.status.discoveredToolCount, ...safeUpstream(upstream) }],
+            });
+            return;
+          }
+          if (request.method === "POST" && path === "/upstreams/test") {
+            void readJsonBody(request).then(async (body) => {
+              const configuration = parseUpstreamConfiguration(body);
+              try {
+                const result = options.testUpstream === undefined
+                  ? { connected: false, toolCount: 0 }
+                  : await options.testUpstream(configuration);
+                sendJson(response, 200, result);
+              } catch {
+                sendJson(response, 503, { error: "connection_failed", message: "Upstream connection failed" });
+              }
+            }).catch(() => {
+              if (!response.headersSent) sendJson(response, 400, { error: "invalid_upstream", message: "Invalid upstream configuration" });
+            });
+            return;
+          }
+          if (request.method === "POST" && path === "/upstreams") {
+            void readJsonBody(request).then(async (body) => {
+              const configuration = parseUpstreamConfiguration(body);
+              if (options.upstreamPath === undefined) {
+                safeError(response, 503, "upstream_persistence_failed");
+                return;
+              }
+              await persistUpstream(options.upstreamPath, configuration);
+              upstream = configuration;
+              upstreamRuntimeStatus = "restart-required";
+              sendJson(response, 200, { id: "default", restartRequired: true, ...safeUpstream(configuration) });
+            }).catch(() => {
+              if (!response.headersSent) safeError(response, 400, "upstream_persistence_failed");
+            });
+            return;
+          }
+          if (upstreamPath !== null && upstreamPath[1] === "default" && request.method === "PUT") {
+            void readJsonBody(request).then(async (body) => {
+              const configuration = parseUpstreamConfiguration(body);
+              if (options.upstreamPath === undefined) {
+                safeError(response, 503, "upstream_persistence_failed");
+                return;
+              }
+              await persistUpstream(options.upstreamPath, configuration);
+              upstream = configuration;
+              upstreamRuntimeStatus = "restart-required";
+              sendJson(response, 200, { id: "default", restartRequired: true, ...safeUpstream(configuration) });
+            }).catch(() => {
+              if (!response.headersSent) safeError(response, 400, "upstream_persistence_failed");
+            });
+            return;
+          }
+          if (upstreamPath !== null && upstreamPath[1] === "default" && request.method === "DELETE") {
+            sendJson(response, 409, { error: "restart_required", message: "The configured upstream cannot be removed while the gateway is running." });
+            return;
+          }
+        if (request.method === "GET" && path === "/tools") {
+          const tools = options.discoveredTools?.map(sanitizeTool) ?? [];
           sendJson(response, 200, { count: tools.length, tools });
           return;
         }

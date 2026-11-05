@@ -58,17 +58,25 @@ async function main() {
   let downstreamTransport: StdioServerTransport | StreamableHTTPServerTransport | undefined;
   let httpServer: HttpServer | undefined;
   let managementServer: RunningManagementServer | undefined;
+  let activeApproval: ApprovalManager | undefined;
   try {
     const upstreamConfiguration = loadUpstreamConfiguration();
     upstreamTransport = createUpstreamTransport(upstreamConfiguration);
     const policyConfig = loadPolicyConfiguration();
     let policy = createPolicyEngine(policyConfig, parseEnvironmentDeniedTools());
+    const audit = new AuditLogger();
     const approval = new ApprovalManager(
       new Set(policyConfig.approval),
       policyConfig.approvalTimeoutMs,
+      undefined,
+      undefined,
+      {
+        managementEnabled: process.env.NOX_MANAGEMENT_PORT !== undefined,
+        upstream: "configured upstream",
+      },
     );
+    activeApproval = approval;
     let upstreamTimeoutMs = policyConfig.upstreamTimeoutMs;
-    const audit = new AuditLogger();
 
     // Nox acts as an MCP client to the upstream server.
     await upstream.connect(upstreamTransport);
@@ -276,6 +284,9 @@ async function main() {
         tokenPath,
         policy: policyConfig,
         policyPath: process.env.NOX_POLICY_FILE ?? "nox-policy.json",
+        approval,
+        upstream: upstreamConfiguration,
+        upstreamPath: process.env.NOX_UPSTREAM_FILE ?? "nox-upstream.json",
         toolNames: new Set(tools.keys()),
         discoveredTools,
         applyPolicy: (updatedPolicy) => {
@@ -289,6 +300,18 @@ async function main() {
           upstream: "connected",
           downstreamTransport: downstreamMode,
           discoveredToolCount: discoveredTools.length,
+        },
+        testUpstream: async (configuration) => {
+          const testClient = new Client({ name: "nox-upstream-test", version: "1.0.0" });
+          const transport = createUpstreamTransport(configuration);
+          try {
+            await withUpstreamTimeout(testClient.connect(transport), upstreamTimeoutMs);
+            const testTools = await withUpstreamTimeout(discoverTools(testClient), upstreamTimeoutMs);
+            return { connected: true, toolCount: testTools.length };
+          } finally {
+            await closeResource("upstream test client", () => testClient.close());
+            await closeResource("upstream test transport", () => transport.close());
+          }
         },
       });
       console.error(
@@ -318,6 +341,7 @@ async function main() {
     }
     process.exitCode = 1;
   } finally {
+    activeApproval?.close();
     if (managementServer !== undefined) {
       await closeResource("management API", managementServer.close);
     }
