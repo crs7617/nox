@@ -13,7 +13,9 @@ function managementUrl(path: string[]): string | undefined {
 async function proxy(request: Request, context: RouteContext): Promise<NextResponse> {
   const path = (await context.params).path;
   const requestedPath = `/${path.join("/")}`;
-  if (!["/health", "/tools", "/policy", "/policy/validate"].includes(requestedPath)) {
+  if (!["/health", "/tools", "/policy", "/policy/validate", "/approvals", "/upstreams", "/upstreams/test"].includes(requestedPath)
+    && !/^\/approvals\/[^/]+(?:\/(?:approve|reject))?$/u.test(requestedPath)
+    && !/^\/upstreams\/[^/]+$/u.test(requestedPath)) {
     return NextResponse.json(
       { error: "not_found", message: "Not found" },
       { status: 404, headers: { "cache-control": "no-store" } },
@@ -64,5 +66,9 @@ export async function POST(request: Request, context: RouteContext) {
 }
 
 export async function PUT(request: Request, context: RouteContext) {
+  return proxy(request, context);
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
   return proxy(request, context);
 }

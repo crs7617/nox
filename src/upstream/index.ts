@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, rename, unlink, writeFile } from "node:fs";
 import { resolve } from "node:path";
+import { promisify } from "node:util";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -20,6 +21,9 @@ export type UpstreamConfiguration =
   | HttpUpstreamConfiguration;
 
 export class UpstreamConfigurationError extends Error {}
+const writeFileAsync = promisify(writeFile);
+const renameAsync = promisify(rename);
+const unlinkAsync = promisify(unlink);
 
 export const DEFAULT_UPSTREAM_CONFIGURATION: Readonly<StdioUpstreamConfiguration> = {
   transport: "stdio",
@@ -30,6 +34,9 @@ export const DEFAULT_UPSTREAM_CONFIGURATION: Readonly<StdioUpstreamConfiguration
 function parseArguments(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((argument) => typeof argument !== "string")) {
     throw new UpstreamConfigurationError("Upstream args must be an array of strings");
+  }
+  if (value.some((argument) => /[\u0000\r\n]/u.test(argument))) {
+    throw new UpstreamConfigurationError("Upstream args contain invalid characters");
   }
   return [...value];
 }
@@ -44,6 +51,9 @@ function parseHttpUrl(value: unknown): string {
     url = new URL(value);
   } catch {
     throw new UpstreamConfigurationError("HTTP upstream url is invalid");
+  }
+  if (url.username !== "" || url.password !== "") {
+    throw new UpstreamConfigurationError("HTTP upstream credentials must not be embedded in the URL");
   }
   if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname))) {
     throw new UpstreamConfigurationError(
@@ -75,6 +85,9 @@ export function parseUpstreamConfiguration(value: unknown): UpstreamConfiguratio
     }
     if (typeof record.command !== "string" || record.command.trim() === "") {
       throw new UpstreamConfigurationError("Upstream command must be a non-empty string");
+    }
+    if (/[\u0000\r\n]/u.test(record.command)) {
+      throw new UpstreamConfigurationError("Upstream command contains invalid characters");
     }
     return {
       transport: "stdio",
@@ -170,4 +183,22 @@ export function createUpstreamTransport(
       reconnectionDelayGrowFactor: 1,
     },
   });
+}
+
+export async function persistUpstreamConfiguration(
+  path: string,
+  configuration: UpstreamConfiguration,
+): Promise<void> {
+  const target = resolve(path);
+  const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
+  await writeFileAsync(temporary, `${JSON.stringify(configuration, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  try {
+    await renameAsync(temporary, target);
+  } catch {
+    await unlinkAsync(temporary).catch(() => undefined);
+    throw new UpstreamConfigurationError("Unable to persist upstream configuration");
+  }
 }

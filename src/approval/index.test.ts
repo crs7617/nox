@@ -76,4 +76,37 @@ describe("approval manager", () => {
     expect(manager.required("ordinary")).toBe(false);
     expect(manager.required("sensitive")).toBe(true);
   });
+
+  it("supports authenticated management resolution with safe metadata", async () => {
+    const manager = new ApprovalManager(
+      new Set(["sensitive"]),
+      1000,
+      () => undefined,
+      vi.fn(),
+      { managementEnabled: true, upstream: "local server" },
+    );
+    const waiting = manager.request("sensitive");
+    await vi.waitFor(() => expect(manager.list()).toHaveLength(1));
+    const pending = manager.list()[0];
+    expect(pending).toMatchObject({ toolName: "sensitive", upstream: "local server", status: "pending" });
+    expect(pending).not.toHaveProperty("arguments");
+    expect(manager.resolve(pending.id, "approved")).toBe(true);
+    expect(manager.resolve(pending.id, "rejected")).toBe(false);
+    expect(await waiting).toBe("approved");
+  });
+
+  it("fails closed when the gateway closes a pending request", async () => {
+    const manager = new ApprovalManager(
+      new Set(["sensitive"]),
+      1000,
+      () => undefined,
+      vi.fn(),
+      { managementEnabled: true },
+    );
+    const waiting = manager.request("sensitive");
+    await vi.waitFor(() => expect(manager.list()).toHaveLength(1));
+    manager.close();
+    expect(await waiting).toBe("unavailable");
+    expect(manager.list()).toEqual([]);
+  });
 });
